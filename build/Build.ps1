@@ -14,13 +14,13 @@ function Invoke-Build {
         $SanityCheck = $true
 
         if (-not (Test-Path -Path "build")) {
-            Write-Message -Type Error "Build folder not found."
+            Write-Message "Error" "Build folder not found."
             $SanityCheck = $false
         }
 
         $BuildProfilesJson = Get-FileContent -Type "build" -FileName "BuildProfiles.json" | Out-String | ConvertFrom-Json
         if ($null -eq $BuildProfilesJson) {
-            Write-Message -Type Error "Failed to read build profile file."
+            Write-Message "Error" "Failed to read build profile file."
             $SanityCheck = $false
         }
 
@@ -28,24 +28,24 @@ function Invoke-Build {
 
         $WordList = Get-FileContent -Type "data" -FileName "WordList.txt" | Where-Object { -not [String]::IsNullOrEmpty($_) }
         if ($null -eq $WordList) {
-            Write-Message -Type Error "Failed to retrieve word list."
+            Write-Message "Error" "Failed to retrieve word list."
             $SanityCheck = $false
         }
 
         if ($NoNewSeed) {
             $Seed = Get-FileContent -Type "build" -FileName "Seed.txt" -ErrorAction SilentlyContinue | Out-String
             if ([String]::IsNullOrEmpty($Seed)) {
-                Write-Message -Type Error -Message "Failed to read seed from file."
+                Write-Message "Error" "Failed to read seed from file."
                 $SanityCheck = $false
             }
             else {
                 $Seed = [Int32]::Parse($Seed)
-                Write-Message -Message "Using seed: $($Seed)"
+                Write-Message "Info" "Using seed: $($Seed)"
             }
         }
         else {
             $Seed = Get-RandomInt
-            Write-Message -Message "Generated seed: $($Seed)"
+            Write-Message "Info" "Generated seed: $($Seed)"
             Set-FileContent -Type "build" -FileName "Seed.txt" -Content "$($Seed)"
         }
 
@@ -53,7 +53,7 @@ function Invoke-Build {
         $CurrentPlatform = [System.Environment]::OSVersion.Platform
         $TestModuleImport = $CurrentPlatform -eq "Win32NT"
         if ($TestModuleImport -eq $false) {
-            Write-Message -Type Warning -Message "Unsupported platform for module import testing: $($CurrentPlatform)"
+            Write-Message "Warning" "Unsupported platform for module import testing: $($CurrentPlatform)"
         }
 
         $EncryptionKey = New-RandomByteArray -Size 32
@@ -65,7 +65,7 @@ function Invoke-Build {
 
         $BuildProfileObject = $BuildProfilesJson.Profiles | Where-Object { $_.Name -eq $Name }
         if ($null -eq $BuildProfileObject) {
-            Write-Message -Type Error -Message "No build profile found for name: $($Name)"
+            Write-Message "Error" "No build profile found for name: $($Name)"
             return
         }
 
@@ -75,13 +75,13 @@ function Invoke-Build {
         $ErrorCount = 0
         $Modules = @()
 
-        Write-Message "Building script '$($ScriptFilename)'..."
+        Write-Message "Info" "Building script '$($ScriptFilename)'..."
 
         foreach ($IncludeId in $BuildProfileObject.Includes) {
 
             $IncludeObject = $BuildProfilesJson.Includes | Where-Object { $_.Id -eq $IncludeId }
             if ($null -eq $IncludeObject) {
-                Write-Message -Type Error -Message "No include found for ID: $($IncludeId)"
+                Write-Message "Error" "No include found for ID: $($IncludeId)"
                 return
             }
 
@@ -91,14 +91,14 @@ function Invoke-Build {
 
                 $FileObject = $BuildProfilesJson.Files | Where-Object { $_.Id -eq $FileId }
                 if ($null -eq $FileObject) {
-                    Write-Message -Type Error -Message "No file found for ID: $($FileId)"
+                    Write-Message "Error" "No file found for ID: $($FileId)"
                     return
                 }
 
                 $ModulePath = Join-Path -Path $RootPath -ChildPath $FileObject.Path
                 $ModuleItem = Get-Item -Path $ModulePath -ErrorAction SilentlyContinue
                 if ($null -eq $ModuleItem) {
-                    Write-Message -Type Error "Failed to open file '$($ModulePath)'."
+                    Write-Message "Error" "Failed to open file '$($ModulePath)'."
                     return
                 }
 
@@ -120,19 +120,19 @@ function Invoke-Build {
 
                     $DataToReplace = Get-FileContent -Type "data" -FileName $MatchAndReplace.DataFile | Out-String
                     if ($null -eq $DataToReplace) {
-                        Write-Message -Type Error "Failed to retrieve data file content: $($MatchAndReplace.DataFile)"
+                        Write-Message "Error" "Failed to retrieve data file content: $($MatchAndReplace.DataFile)"
                         return
                     }
 
                     $DataToReplace = ConvertTo-EmbeddedTextBlob -Text $DataToReplace
                     if ($null -eq $DataToReplace) {
-                        Write-Message -Type Error "Failed to encode data file content: $($MatchAndReplace.DataFile)"
+                        Write-Message "Error" "Failed to encode data file content: $($MatchAndReplace.DataFile)"
                         return
                     }
 
                     $ScriptBlock = $ScriptBlock -replace "{{$($MatchAndReplace.Tag)}}", $DataToReplace
 
-                    Write-Message "Embedded data file '$($MatchAndReplace.DataFile)' into '$($ModuleFilename)'"
+                    Write-Message "Info" "Embedded data file '$($MatchAndReplace.DataFile)' into '$($ModuleFilename)'"
                 }
 
                 # Is the script block detected by AMSI after stripping the comments?
@@ -144,29 +144,29 @@ function Invoke-Build {
                 if ($TestModuleImport) {
                     try {
                         & $ExecutionContext.InvokeCommand.NewScriptBlock($ScriptBlock)
-                        Write-Message "File '$($ModuleFilename)' (name: '$($ModuleName)') was loaded successfully."
+                        Write-Message "Info" "File '$($ModuleFilename)' (name: '$($ModuleName)') was loaded successfully."
                     }
                     catch {
                         if ($_.FullyQualifiedErrorId -like "ScriptContainedMaliciousContent*") {
                             # Exception triggered because of AMSI.
                             $ErrorCount += 1
-                            Write-Message -Type Error "Malicious content detected in module '$($ModuleFilename)' (name: '$($ModuleName)'): $($_.Exception.Message.Trim())"
+                            Write-Message "Error" "Malicious content detected in module '$($ModuleFilename)' (name: '$($ModuleName)'): $($_.Exception.Message.Trim())"
                         }
                         elseif ($_.FullyQualifiedErrorId -eq "CommandNotFoundException") {
                             # Exception triggered because a non-existing command is invoked. This is expected
                             # in certain files.
                             if (@("New-Enum", "New-StructureField", "New-Function") -notcontains $_.TargetObject) {
                                 $ErrorCount += 1
-                                Write-Message -Type Error "Unexpected error while importing module '$($ModuleFilename)' (name: '$($ModuleName)'): $($_.Exception.Message.Trim())"
+                                Write-Message "Error" "Unexpected error while importing module '$($ModuleFilename)' (name: '$($ModuleName)'): $($_.Exception.Message.Trim())"
                             }
                             else {
-                                Write-Message "File '$($ModuleFilename)' (name: '$($ModuleName)') was not loaded successfully (expected)."
+                                Write-Message "Info" "File '$($ModuleFilename)' (name: '$($ModuleName)') was not loaded successfully (expected)."
                             }
                         }
                         else {
                             # Other unexpected exception
                             $ErrorCount += 1
-                            Write-Message -Type Error "Unexpected error while importing module '$($ModuleFilename)' (name: '$($ModuleName)'): $($_.Exception.Message.Trim())"
+                            Write-Message "Error" "Unexpected error while importing module '$($ModuleFilename)' (name: '$($ModuleName)'): $($_.Exception.Message.Trim())"
                         }
                     }
                 }
@@ -185,21 +185,13 @@ function Invoke-Build {
         }
 
         if ($ErrorCount -eq 0) {
-            Write-Message -Type Success "Build successful, writing result to file '$($ScriptPath)'..."
+            Write-Message "Success" "Build successful, writing result to file '$($ScriptPath)'..."
             $ScriptContent += "`r`n$(Get-ScriptLoader -Modules $Modules -EncodedKey ([System.Convert]::ToBase64String($EncryptionKey)))"
             $ScriptContent | Out-File -FilePath $ScriptPath -Encoding ascii
-
-            if ($BuildProfileName -eq "PrivescCheck") {
-
-                # If the output script is PrivescCheck.ps1, copy the result at the root of the
-                # project as well.
-                $ScriptPath = Join-Path -Path $RootPath -ChildPath "$($ScriptFilename)"
-                Write-Message -Type Info "Copying result to file '$($ScriptPath)'..."
-                $ScriptContent | Out-File -FilePath $ScriptPath -Encoding ascii
-            }
+            Write-Message "Info" "File hash: $((Get-FileHash -Path $ScriptPath).Hash)"
         }
         else {
-            Write-Message -Type Error "Build failed, check the build logs for more information."
+            Write-Message "Error" "Build failed, check the build logs for more information."
         }
     }
 }
@@ -208,24 +200,20 @@ function Write-Message {
 
     [CmdletBinding()]
     param(
-        [Parameter(Position = 0, Mandatory = $true)]
-        [String] $Message,
+        [Parameter(Position=0, Mandatory=$true)]
         [ValidateSet("Success", "Info", "Warning", "Error")]
-        [String] $Type
+        [String] $Type,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        [String] $Message
     )
 
-    $Symbol = "[*]"; $Color = "Blue"
-
     switch ($Type) {
-        "Success" {
-            $Symbol = "[+]"; $Color = "Green"
-        }
-        "Warning" {
-            $Symbol = "[!]"; $Color = "Yellow"
-        }
-        "Error" {
-            $Symbol = "[-]"; $Color = "Red"
-        }
+        "Info"      { $Symbol = "[*]"; $Color = "Blue" }
+        "Success"   { $Symbol = "[+]"; $Color = "Green" }
+        "Warning"   { $Symbol = "[!]"; $Color = "Yellow" }
+        "Error"     { $Symbol = "[-]"; $Color = "Red" }
+        default     { throw "Unknown message type: $($Type)" }
     }
 
     Write-Host -NoNewline -ForegroundColor "$Color" "$($Symbol) "
@@ -335,15 +323,15 @@ function Get-LolDriver {
         $LolDrivers = (New-Object Net.WebClient).DownloadString($LolDriversUrl)
     }
     catch {
-        Write-Message -Type Error -Message "Net.WebClient exception: $($_.Exception.Message)"
+        Write-Message "Error" "Net.WebClient exception: $($_.Exception.Message)"
         return
     }
 
     $LolDrivers = ConvertFrom-Csv -InputObject $LolDrivers
-    Write-Message -Type Success -Message "Successfully downloaded LOL driver list from $($LolDriversUrl) (count=$($LolDrivers.Count))"
+    Write-Message "Success" "Successfully downloaded LOL driver list from $($LolDriversUrl) (count=$($LolDrivers.Count))"
 
     $VulnerableLolDrivers = $LolDrivers | Where-Object { $_.Category -like "*vulnerable*" }
-    Write-Message -Message "Filtered list on 'vulnerable' drivers (count=$($VulnerableLolDrivers.Count))"
+    Write-Message "Info" "Filtered list on 'vulnerable' drivers (count=$($VulnerableLolDrivers.Count))"
 
     foreach ($VulnerableLolDriver in $VulnerableLolDrivers) {
 
@@ -362,7 +350,7 @@ function Get-LolDriver {
         $HashesMax = (@($HashesMd5.Count, $HashesSha1.Count, $HashesSha256.Count, $AuthenticodeHashesSha1.Count, $AuthenticodeHashesSha256.Count) | Measure-Object -Maximum).Maximum
 
         if ($HashesMax -eq 0) {
-            Write-Message -Type Warning -Message "No hash found for entry with ID: $($VulnerableLolDriver.Id)"
+            Write-Message "Warning" "No hash found for entry with ID: $($VulnerableLolDriver.Id)"
             continue
         }
 
@@ -399,7 +387,7 @@ function Update-LolDriverList {
     # Retrieve and process LOL driver list from the LOL drivers website.
     $LolDrivers = Get-LolDriver
     if ($null -eq $LolDrivers) {
-        Write-Message -Type Error -Message "Failed to retrieve or parse remote LOL driver list."
+        Write-Message "Error" "Failed to retrieve or parse remote LOL driver list."
         return
     }
 
@@ -407,22 +395,22 @@ function Update-LolDriverList {
     $LocalLolDriversContent = Get-FileContent -Type "data" -FileName $VulnerableDriversFileName -ErrorAction SilentlyContinue | Out-String
     if ($null -ne $LocalLolDriversContent) {
         $LocalLolDrivers = $LocalLolDriversContent | ConvertFrom-Csv
-        Write-Message -Message "Parsed local LOL driver list (count=$($LocalLolDrivers.Count))"
+        Write-Message "Info" "Parsed local LOL driver list (count=$($LocalLolDrivers.Count))"
         # Compare the two lists. If they are equal, we don't need to update our local file.
         $Comparison = Compare-Object -ReferenceObject $LocalLolDrivers -DifferenceObject $LolDrivers -Property Id,Hash
         if ($null -eq $Comparison) {
-            Write-Message -Type Success -Message "The local copy of the LOL driver list is already up-to-date."
+            Write-Message "Success" "The local copy of the LOL driver list is already up-to-date."
             return
         }
     }
 
-    Write-Message -Message "The local copy of the LOL driver list needs to be created or updated..."
+    Write-Message "Info" "The local copy of the LOL driver list needs to be created or updated..."
 
     # Convert the list to CSV and write to file.
     $LolDriversCsv = $LolDrivers | ConvertTo-Csv -Delimiter "," -NoTypeInformation | Out-String
     Set-FileContent -Type "data" -FileName $VulnerableDriversFileName -Content $LolDriversCsv
 
-    Write-Message -Type Success -Message "LOL driver list file created or updated: $($VulnerableDriversFileName)"
+    Write-Message "Success" "LOL driver list file created or updated: $($VulnerableDriversFileName)"
 }
 
 function Update-WordList {
