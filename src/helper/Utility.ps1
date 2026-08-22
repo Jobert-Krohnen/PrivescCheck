@@ -298,6 +298,19 @@ function Convert-CredentialBlobToString {
     }
 }
 
+function Convert-ByteArrayToHexString {
+
+    [CmdletBinding()]
+    param (
+        [Parameter(Position=0, Mandatory=$true)]
+        [Byte[]] $Bytes
+    )
+
+    process {
+        return [System.BitConverter]::ToString($Bytes) -replace '-',''
+    }
+}
+
 function Convert-WlanXmlProfile {
     <#
     .SYNOPSIS

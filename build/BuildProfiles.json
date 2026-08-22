@@ -79,6 +79,12 @@
             "MatchAndReplace": null
         },
         {
+            "Id": "HELPER_CODE_INTEGRITY",
+            "Path": ".\\src\\helper\\CodeIntegrity.ps1",
+            "Compression": true,
+            "MatchAndReplace": null
+        },
+        {
             "Id": "HELPER_ENVIRONMENT",
             "Path": ".\\src\\helper\\Environment.ps1",
             "Compression": true,
@@ -243,6 +249,7 @@
             "Files": [
                 "HELPER_ACCESS_CONTROL",
                 "HELPER_CACHE",
+                "HELPER_CODE_INTEGRITY",
                 "HELPER_ENVIRONMENT",
                 "HELPER_MSI",
                 "HELPER_SYSTEM_CONFIGURATION",
