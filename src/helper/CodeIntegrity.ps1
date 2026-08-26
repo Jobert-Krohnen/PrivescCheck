@@ -28,16 +28,15 @@ function Get-CodeIntegrityPolicy {
                            Hash=00573981F5478DBEC6704FB77131AD92E91F00178CCCCCAEB2F70763E927F2D7}, @{Id=ID_DENY_D_0004;
                            Type=Deny; MinimumVersion=65535.65535.65535.65535;
                            Hash=005C8117D7BF2E73E6139D3C91F24B70E22A844E}...}
-    SignerRules          : {@{Id=ID_SIGNER_S_0001; Name=Signer 1; CertRootType=System.Byte[];
+    SignerRules          : {@{Id=ID_SIGNER_S_0001; Name=Signer 1; CertRootType=TBS;
                            CertRootValue=4843A82ED3B1F2BFBEE9671960E1940C942F688D;
                            FileAttribRef=System.Collections.Generic.List`1[System.Management.Automation.PSObject]},
-                           @{Id=ID_SIGNER_S_0002; Name=Signer 2; CertRootType=System.Byte[];
+                           @{Id=ID_SIGNER_S_0002; Name=Signer 2; CertRootType=TBS;
                            CertRootValue=4678C6E4A8787A8E6ED2BCE8792B122F6C08AFD8;
                            FileAttribRef=System.Collections.Generic.List`1[System.Management.Automation.PSObject]},
-                           @{Id=ID_SIGNER_S_0003; Name=Signer 3; CertRootType=System.Byte[];
+                           @{Id=ID_SIGNER_S_0003; Name=Signer 3; CertRootType=TBS;
                            CertRootValue=A08E79C386083D875014C409C13D144E0A24386132980DF11FF59737C8489EB1;
-                           CertPublisher=CAPCOM Co.,Ltd.}, @{Id=ID_SIGNER_S_0004; Name=Signer 4;
-                           CertRootType=System.Byte[];
+                           CertPublisher=CAPCOM Co.,Ltd.}, @{Id=ID_SIGNER_S_0004; Name=Signer 4; CertRootType=TBS;
                            CertRootValue=D8BE9E4D9074088EF818BC6F6FB64955E90378B2754155126FEEBBBD969CF0AE; CertOemID=Cheat
                            Engine}...}
     SigningScenarios     : {@{Id=ID_SIGNINGSCENARIO_DRIVERS_1; Value=131; MinimumHashAlgorithmSpecified=False;
@@ -297,7 +296,7 @@ function Get-CodeIntegrityPolicy {
                         $CertRootBytes = [Byte[]] @(($BinaryReader.ReadUInt32() -band 0xFF))
                     }
 
-                    $SignerRule | Add-Member -MemberType "NoteProperty" -Name "CertRootType" -Value $CertRootBytes
+                    $SignerRule | Add-Member -MemberType "NoteProperty" -Name "CertRootType" -Value $CertRootType
                     $SignerRule | Add-Member -MemberType "NoteProperty" -Name "CertRootValue" -Value (Convert-ByteArrayToHexString -Bytes $CertRootBytes)
 
                     $CertEKULength = $BinaryReader.ReadUInt32()
