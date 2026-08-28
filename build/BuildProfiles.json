@@ -139,7 +139,7 @@
             "MatchAndReplace": [
                 {
                     "Tag": "VULNERABLE_DRIVERS",
-                    "DataFile": "VulnerableDrivers.csv"
+                    "DataFile": "VulnerableDriverSamples.csv"
                 },
                 {
                     "Tag": "FILE_EXTENSION_ASSOCIATIONS",

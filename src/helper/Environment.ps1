@@ -1090,6 +1090,7 @@ function Get-RemoteDesktopUserSession {
 
 function Get-KnownVulnerableKernelDriver {
 
+    [OutputType([Object])]
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
@@ -1097,100 +1098,136 @@ function Get-KnownVulnerableKernelDriver {
     )
 
     begin {
-        $VulnerableDrivers = Get-KnownVulnerableKernelDriverList
+        $VulnerableDriverSamples = Get-KnownVulnerableKernelDriverSampleList
         $FsRedirectionValue = Disable-Wow64FileSystemRedirection
     }
 
     process {
+        $TargetFilePath = $Service.ImagePathResolved
+        $VulnerableDriverSampleMatch = $null
 
-        $ResultHash = ""
-        $ResultUrl = ""
+        # Local cache of the file and authenticode hashes so that we don't recalculate
+        # them every time we check a driver sample object.
 
-        $FileHashMd5 = ""
-        $FileHashSha1 = ""
-        $FileHashSha256 = ""
-        $FileAuthenticodeHashSha1 = ""
-        $FileAuthenticodeHashSha256 = ""
+        $FileMD5 = ""
+        $FileSHA1 = ""
+        $FileSHA256 = ""
+        $AuthenticodeSHA1 = ""
+        $AuthenticodeSHA256 = ""
 
-        foreach ($VulnerableDriver in $VulnerableDrivers) {
+        foreach ($VulnerableDriverSample in $VulnerableDriverSamples) {
 
-            $Hashes = [String[]] $VulnerableDriver.Hash.Split(",")
+            # Try to get a match on the file hash.
 
-            if ($Hashes.Count -eq 0) {
-                Write-Warning "No hash found for entry with ID: $($VulnerableDriver.Id)"
-                continue
-            }
+            $FileHashChecked = $false
 
-            $HashLength = $Hashes[0].Length
+            foreach ($HashAlg in @("MD5", "SHA1", "SHA256")) {
 
-            switch ($HashLength) {
+                $SampleFileHash = $VulnerableDriverSample.$HashAlg
 
-                32 {
-                    # MD5 hash
-                    if ([String]::IsNullOrEmpty($FileHashMd5)) {
-                        $FileHashMd5 = Get-FileHashHex -FilePath $Service.ImagePathResolved -Algorithm MD5
-                    }
-                    if ($Hashes -contains $FileHashMd5) {
-                        $ResultHash = $FileHashMd5
-                        $ResultUrl = $VulnerableDriver.Url
-                    }
-                    break
-                }
+                if (-not [String]::IsNullOrEmpty($SampleFileHash)) {
 
-                40 {
-                    # SHA1 hash or Authenticode SHA1 hash
-                    if ([String]::IsNullOrEmpty($FileHashSha1)) {
-                        $FileHashSha1 = Get-FileHashHex -FilePath $Service.ImagePathResolved -Algorithm SHA1
-                    }
-                    if ([String]::IsNullOrEmpty($FileAuthenticodeHashSha1)) {
-                        $FileAuthenticodeHashSha1 = Get-FileAuthenticodeHashHex -FilePath $Service.ImagePathResolved -Algorithm SHA1
-                    }
-                    if ($Hashes -contains $FileHashSha1) {
-                        $ResultHash = $FileHashSha1
-                        $ResultUrl = $VulnerableDriver.Url
-                    }
-                    else {
-                        if ($Hashes -contains $FileAuthenticodeHashSha1) {
-                            $ResultHash = $FileAuthenticodeHashSha1
-                            $ResultUrl = $VulnerableDriver.Url
+                    switch ($HashAlg) {
+
+                        "MD5" {
+                            if ([String]::IsNullOrEmpty($FileMD5)) {
+                                $FileMD5 = Get-FileHashHex -FilePath $TargetFilePath -Algorithm MD5
+                            }
+
+                            if ($SampleFileHash -eq $FileMD5) {
+                                $VulnerableDriverSampleMatch = $VulnerableDriverSample
+                            }
+                        }
+
+                        "SHA1" {
+                            if ([String]::IsNullOrEmpty($FileSHA1)) {
+                                $FileSHA1 = Get-FileHashHex -FilePath $TargetFilePath -Algorithm SHA1
+                            }
+
+                            if ($SampleFileHash -eq $FileSHA1) {
+                                $VulnerableDriverSampleMatch = $VulnerableDriverSample
+                            }
+                        }
+
+                        "SHA256" {
+                            if ([String]::IsNullOrEmpty($FileSHA256)) {
+                                $FileSHA256 = Get-FileHashHex -FilePath $TargetFilePath -Algorithm SHA256
+                            }
+
+                            if ($SampleFileHash -eq $FileSHA256) {
+                                $VulnerableDriverSampleMatch = $VulnerableDriverSample
+                            }
                         }
                     }
-                    break
-                }
 
-                64 {
-                    # SHA256 hash or Authenticode SHA256 hash
-                    if ([String]::IsNullOrEmpty($FileHashSha256)) {
-                        $FileHashSha256 = Get-FileHashHex -FilePath $Service.ImagePathResolved -Algorithm SHA256
-                    }
-                    if ([String]::IsNullOrEmpty($FileAuthenticodeHashSha256)) {
-                        $FileAuthenticodeHashSha256 = Get-FileAuthenticodeHashHex -FilePath $Service.ImagePathResolved -Algorithm SHA256
-                    }
-                    if ($Hashes -contains $FileHashSha256) {
-                        $ResultHash = $FileHashSha256
-                        $ResultUrl = $VulnerableDriver.Url
-                    }
-                    else {
-                        if ($Hashes -contains $FileAuthenticodeHashSha256) {
-                            $ResultHash = $FileAuthenticodeHashSha256
-                            $ResultUrl = $VulnerableDriver.Url
-                        }
-                    }
+                    # Exit loop as soon as we find a file hash to check.
+                    $FileHashChecked = $true
                     break
-                }
-
-                default {
-                    Write-Warning "Empty or invalid hash type for entry: $($VulnerableDriver.Id) - $($Hashes[0])"
                 }
             }
 
-            if ([String]::IsNullOrEmpty($ResultHash)) { continue }
+            # Exit the loop if we find a match based on the target file's hash.
+            if ($null -ne $VulnerableDriverSampleMatch) { break }
 
+            # Move on to the next entry if the file hash was checked.
+            if ($FileHashChecked) { continue }
+
+            # Try to get a match on the authenticode hash.
+
+            $AuthenticodeHashChecked = $false
+
+            foreach ($HashAlg in @("SHA1", "SHA256")) {
+
+                $SampleAuthenticodeHash = $VulnerableDriverSample."Authenticode$($HashAlg)"
+
+                if (-not [String]::IsNullOrEmpty($SampleAuthenticodeHash)) {
+
+                    switch ($HashAlg) {
+
+                        "SHA1" {
+                            if ([String]::IsNullOrEmpty($AuthenticodeSHA1)) {
+                                $AuthenticodeSHA1 = Get-FileAuthenticodeHashHex -FilePath $TargetFilePath -Algorithm SHA1
+                            }
+
+                            if ($SampleAuthenticodeHash -eq $AuthenticodeSHA1) {
+                                $VulnerableDriverSampleMatch = $VulnerableDriverSample
+                            }
+                        }
+
+                        "SHA256" {
+                            if ([String]::IsNullOrEmpty($AuthenticodeSHA256)) {
+                                $AuthenticodeSHA256 = Get-FileAuthenticodeHashHex -FilePath $TargetFilePath -Algorithm SHA256
+                            }
+
+                            if ($SampleAuthenticodeHash -eq $AuthenticodeSHA256) {
+                                $VulnerableDriverSampleMatch = $VulnerableDriverSample
+                            }
+                        }
+                    }
+
+                    # Exit loop as soon as we find an authenticode hash to check.
+                    $AuthenticodeHashChecked = $true
+                    break
+                }
+            }
+
+            # Exit the loop if we find a match based on the target file's authenticode hash.
+            if ($null -ne $VulnerableDriverSampleMatch) { break }
+
+            # This check is superfluous, but it exists for consistency with the previous one.
+            # Move on to the next entry if the authenticode hash was checked.
+            if ($AuthenticodeHashChecked) { continue }
+        }
+
+        if ($null -ne $VulnerableDriverSampleMatch) {
             $Result = $Service.PSObject.Copy()
-            $Result | Add-Member -MemberType "NoteProperty" -Name "FileHash" -Value $ResultHash
-            $Result | Add-Member -MemberType "NoteProperty" -Name "Url" -Value $ResultUrl
-            $Result
-            break
+            if ($FileMD5) { $Result | Add-Member -MemberType "NoteProperty" -Name "FileMD5" -Value $FileMD5 }
+            if ($FileSHA1) { $Result | Add-Member -MemberType "NoteProperty" -Name "FileSHA1" -Value $FileSHA1 }
+            if ($FileSHA256) { $Result | Add-Member -MemberType "NoteProperty" -Name "FileSHA256" -Value $FileSHA256 }
+            if ($AuthenticodeSHA1) { $Result | Add-Member -MemberType "NoteProperty" -Name "AuthenticodeSHA1" -Value $AuthenticodeSHA1 }
+            if ($AuthenticodeSHA256) { $Result | Add-Member -MemberType "NoteProperty" -Name "AuthenticodeSHA256" -Value $AuthenticodeSHA256 }
+            $Result | Add-Member -MemberType "NoteProperty" -Name "Reference" -Value $VulnerableDriverSample.Url
+            return $Result
         }
     }
 

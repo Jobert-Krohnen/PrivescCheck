@@ -966,15 +966,18 @@ function Get-FileAuthenticodeHashHex {
     }
 }
 
-function Get-KnownVulnerableKernelDriverList {
+function Get-KnownVulnerableKernelDriverSampleList {
 
     [CmdletBinding()]
     param ()
 
-    $VulnerableDriverList = ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.VulnerableDrivers | ConvertFrom-Csv
-    if ($null -eq $VulnerableDriverList) { Write-Warning "Failed to get list of vulnerable drivers."; return }
+    $VulnerableDriverSampleList = ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.VulnerableDriverSamples | ConvertFrom-Csv
+    if ($null -eq $VulnerableDriverSampleList) {
+        Write-Warning "Failed to retrieve the list of known vulnerable driver samples."
+        return
+    }
 
-    $VulnerableDriverList | ForEach-Object {
+    $VulnerableDriverSampleList | ForEach-Object {
         $_ | Add-Member -MemberType "NoteProperty" -Name "Url" -Value "https://www.loldrivers.io/drivers/$($_.Id)"
         $_
     }

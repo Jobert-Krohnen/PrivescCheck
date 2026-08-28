@@ -124,15 +124,18 @@ function Invoke-Build {
                         return
                     }
 
-                    $DataToReplace = ConvertTo-EmbeddedTextBlob -Text $DataToReplace
+                    $DataToReplaceBlob = ConvertTo-EmbeddedTextBlob -Text $DataToReplace
                     if ($null -eq $DataToReplace) {
                         Write-Message "Error" "Failed to encode data file content: $($MatchAndReplace.DataFile)"
                         return
                     }
 
-                    $ScriptBlock = $ScriptBlock -replace "{{$($MatchAndReplace.Tag)}}", $DataToReplace
+                    $ScriptBlock = $ScriptBlock -replace "{{$($MatchAndReplace.Tag)}}", $DataToReplaceBlob
 
-                    Write-Message "Info" "Embedded data file '$($MatchAndReplace.DataFile)' into '$($ModuleFilename)'"
+                    $DataToReplaceSize = [Math]::Round($DataToReplace.Length / 1024, 2)
+                    $DataToReplaceBlobSize = [Math]::Round($DataToReplaceBlob.Length / 1024, 2)
+
+                    Write-Message "Info" "Embedded data file '$($MatchAndReplace.DataFile)' into '$($ModuleFilename)' (orig=$($DataToReplaceSize) KB, blob=$($DataToReplaceBlobSize) KB)."
                 }
 
                 # Is the script block detected by AMSI after stripping the comments?
@@ -311,6 +314,282 @@ function Set-FileContent {
     $Content | Set-Content -Path $FilePath -Encoding Ascii
 }
 
+function Get-LolDriverJson {
+
+    [CmdletBinding()]
+    param ()
+
+    begin {
+        $LolDriversJsonUrl = "https://www.loldrivers.io/api/drivers.json"
+        $ResultCounter = 0
+        $KnownVulnerableSampleCounter = 0
+    }
+
+    process {
+        try {
+            $LolDriversJsonFile = (New-Object Net.WebClient).DownloadString($LolDriversJsonUrl)
+        }
+        catch {
+            Write-Message "Error" "[LOLDRIVERS] Failed to download $($LolDriversJsonUrl): $($_.Exception.Message)"
+            return
+        }
+
+        # ISSUE: ConvertFrom-Json cannot be used to parse the JSON file in PS 5.1
+        # because the "Sections" dictionary may contain section names that are
+        # considered duplicates, such as "INIT" and "init". This is due to the fact
+        # that ConvertFrom-Json treats strings in a case insensitive way, whereas JSON
+        # does not. There is a solution for that in PS 7+, with the "-AsHashtable"
+        # switch.
+        #
+        # SOLUTION: For PS 5.1, we can use a .Net trick instead (see resource link
+        # below).
+        #
+        # LINKS:
+        # https://github.com/PowerShell/PowerShell/issues/3705
+        # https://github.com/PowerShell/PowerShell/issues/3705#issuecomment-350022987
+
+        try {
+            $null = [System.Reflection.Assembly]::LoadWithPartialName("System.Web.Extensions")
+            # Create a JavaScriptSerializer object that can handle 134217728 characters
+            # (i.e. 256 MB file of Unicode characters). The default value is 2097152
+            # characters (i.e. 4 MB file of Unicode characters). At the time of writing
+            # The size of the LOL drivers JSON file is roughly 30 MB.
+            $JavaScriptSerializer = New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{ MaxJsonLength = 134217728 }
+            $LolDrivers = [Object[]] ($JavaScriptSerializer.DeserializeObject($LolDriversJsonFile))
+        }
+        catch {
+            Write-Message "Error" "[LOLDRIVERS] Failed to deserialize JSON file: $($_.Exception.Message)"
+            return
+        }
+
+        Write-Message "Info" "[LOLDRIVERS] The database contains $($LolDrivers.Count) records."
+
+        # At this stage, we get an array of objects representing the LOL drivers.
+        # Example:
+        #
+        # Key                    Value
+        # ---                    -----
+        # Id                     2a6a38ca-f2e6-456e-9ccf-db59d8c80c9e
+        # Tags                   {nvflash.sys}
+        # Verified               TRUE
+        # Author                 Michael Haag
+        # Created                2023-07-22
+        # MitreID                T1068
+        # CVE                    {}
+        # Category               vulnerable driver
+        # Commands               {[Command, ], [Description, Confirmed vulnerable driver from Microsoft Block List], [OperatingSystem, Windows], [Privileges, kernel]...}
+        # Resources              {https://gist.github.com/mgraeber-rc/1bde6a2a83237f17b463d051d32e802c}
+        # Detection              {System.Collections.Generic.Dictionary`2[System.String,System.Object]}
+        # Acknowledgement        {[Handle, ], [Person, ]}
+        # KnownVulnerableSamples {System.Collections.Generic.Dictionary`2[System.String,System.Object]}
+
+        # We are only interested in "vulnerable drivers", let's filter them based on
+        # the value of the "Category" field.
+        $VulnerableLolDrivers = [Hashtable[]] ($LolDrivers | Where-Object { $_.Category -eq "vulnerable driver" })
+        if (($null -eq $VulnerableLolDrivers) -or ($VulnerableLolDrivers.Count -eq 0)) {
+            Write-Message "Error" "[LOLDRIVERS] The list of known vulnerable drivers is empty. An issue must have occurred during parsing."
+            return
+        }
+
+        Write-Message "Info" "[LOLDRIVERS] The database contains $($VulnerableLolDrivers.Count) known vulnerable drivers."
+
+        foreach ($VulnerableLolDriver in $VulnerableLolDrivers) {
+            if ($VulnerableLolDriver.ContainsKey("KnownVulnerableSamples")) {
+                $KnownVulnerableSampleCounter += ([Object[]] $VulnerableLolDriver['KnownVulnerableSamples']).Count
+            }
+        }
+
+        Write-Message "Info" "[LOLDRIVERS] The database contains $($SampleCounter) known vulnerable driver samples."
+
+        foreach ($VulnerableLolDriver in $VulnerableLolDrivers) {
+
+            if (-not $VulnerableLolDriver.ContainsKey("Id")) {
+                Write-Message "Warning" "[LOLDRIVERS] Driver entry does not have an ID, ignoring..."
+                continue
+            }
+
+            if (-not $VulnerableLolDriver.ContainsKey("KnownVulnerableSamples")) {
+                Write-Message "Warning" "[LOLDRIVERS] Driver with ID $($VulnerableLolDriver['Id']) does not have a 'KnownVulnerableSamples' property, ignoring..."
+                continue
+            }
+
+            $KnownVulnerableSamples = [Hashtable[]] ($VulnerableLolDriver['KnownVulnerableSamples'])
+            if (($null -eq $KnownVulnerableSamples) -or ($KnownVulnerableSamples.Count -eq 0)) {
+                Write-Message "Warning" "[LOLDRIVERS] Driver with ID $($VulnerableLolDriver['Id']) does not has an empty 'KnownVulnerableSamples' list, ignoring..."
+                continue
+            }
+
+            foreach ($KnownVulnerableSample in $KnownVulnerableSamples) {
+
+                $Result = New-Object -TypeName PSObject
+                $Result | Add-Member -MemberType "NoteProperty" -Name "Id" -Value $VulnerableLolDriver['Id']
+
+                # A "known vulnerable sample" is represented in the following format.
+                #
+                # Key               Value
+                # ---               -----
+                # Authentihash      {[MD5, 7221126b272047b7ced2189f8a4bd484], [SHA1, 0cb5fc2ee1ba75e5b8ed06f92d4edaf08b136333], [SHA256, 4ae065383a4ef5564a515d12adf18427f8d74cc15140edb95e5e2a51ca44fe42]}
+                # Company
+                # Copyright
+                # CreationTimestamp 2014-08-01 20:05:10
+                # Date
+                # Description
+                # ExportedFunctions
+                # FileVersion
+                # Filename
+                # ImportedFunctions {ZwOpenSection, RtlInitUnicodeString, ZwUnmapViewOfSection, IofCompleteRequest...}
+                # Imports           {ntoskrnl.exe, HAL.dll}
+                # InternalName
+                # MD5               ba86e444ae837476e7ccdd06f8867795
+                # MachineType       I386
+                # MagicHeader       50 45 0 0
+                # OriginalFilename
+                # PDBPath
+                # Product
+                # ProductVersion
+                # Publisher
+                # RichPEHeaderHash  {[MD5, e13d58791de2d0a78a75e7aa5895f01c], [SHA1, b01e89baeba99bf6936438515a7908c0e67e1904], [SHA256, 8c7a52aca95ef6b480d3aa8b2fc87809f8761197b6a2df4bae7a34da6664f6c6]}
+                # SHA1              b9c3f4dcc7463cbec84b808d880194bbc304ccd0
+                # SHA256            9368e51ec98e2ad20893a5fc21e6a8b20c5bee158d5c49ca58649cff84db9d68
+                # Sections          {[.text, System.Collections.Generic.Dictionary`2[System.String,System.Object]], [.rdata, System.Collections.Generic.Dictionary`2[System.String,System.Object]], [.data, System.Collections....
+                # Signature
+                # Signatures        {System.Collections.Generic.Dictionary`2[System.String,System.Object]}
+                # Imphash           528ac7a1e034801d1f20238971c6ec19
+                # LoadsDespiteHVCI  FALSE
+
+                # Try to extract the sample file's name.
+                $SampleFilename = ""
+                if ($KnownVulnerableSample.ContainsKey("OriginalFilename")) {
+                    # Extract from 'OriginalFilename' field first.
+                    $SampleOriginalFilename = [String] $KnownVulnerableSample['OriginalFilename']
+                    if (-not [String]::IsNullOrEmpty($SampleOriginalFilename)) {
+                        $SampleFilename = $SampleOriginalFilename
+                    }
+                    else {
+                        if ($KnownVulnerableSample.ContainsKey("Filename")) {
+                            # Extract from 'Filename' field first if 'OriginalFilename' is empty.
+                            $SampleFilenameAttr = [String] $KnownVulnerableSample['Filename']
+                            if (-not [String]::IsNullOrEmpty($SampleFilenameAttr)) {
+                                $SampleFilename = $SampleFilenameAttr
+                            }
+                            else {
+                                if ($VulnerableLolDriver.ContainsKey("Tags")) {
+                                    # Extract from driver's Tags if 'Filename' is empty.
+                                    $VulnerableDriverTags = [String[]] $VulnerableLolDriver['Tags']
+                                    if ($VulnerableDriverTags.Count -gt 0) {
+                                        $SampleFilename = $VulnerableDriverTags[0]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if ([String]::IsNullOrEmpty($SampleFilename)) {
+                    Write-Message Warning "[LOLDRIVERS] Sample with driver ID $($VulnerableLolDriver['Id']) does not have a filename."
+                }
+
+                $Result | Add-Member -MemberType "NoteProperty" -Name "Name" -Value $SampleFilename
+
+                # Try to extract the sample file's version.
+                if ($KnownVulnerableSample.ContainsKey("FileVersion")) {
+                    $Result | Add-Member -MemberType "NoteProperty" -Name "Version" -Value $KnownVulnerableSample['FileVersion']
+                }
+
+                # Try to extract the sample file's hashes.
+                foreach ($HashAlg in @("MD5", "SHA1", "SHA256")) {
+                    if ($KnownVulnerableSample.ContainsKey($HashAlg)) {
+                        $Result | Add-Member -MemberType "NoteProperty" -Name $HashAlg -Value $KnownVulnerableSample[$HashAlg]
+                    }
+                }
+
+                # Try to extract the sample file's authenticode hashes.
+                if ($KnownVulnerableSample.ContainsKey("Authentihash")) {
+                    $SampleAuthenticodeHashes = $KnownVulnerableSample['Authentihash']
+                    foreach ($HashAlg in @("SHA1", "SHA256")) {
+                        if ($SampleAuthenticodeHashes.ContainsKey($HashAlg)) {
+                            $Result | Add-Member -MemberType "NoteProperty" -Name "Authenticode$($HashAlg)" -Value $SampleAuthenticodeHashes[$HashAlg]
+                        }
+                    }
+                }
+                # else {
+                #     Write-Message Warning "[LOLDRIVERS] Sample with driver ID $($VulnerableLolDriver['Id']) does not contain an 'Authentihash' property."
+                # }
+
+                # Try to extract the sample file's TBS certificate hashes.
+                $SampleTbsMD5 = [String[]] @()
+                $SampleTbsSHA1 = [String[]] @()
+                $SampleTbsSHA256 = [String[]] @()
+                $SampleTbsSHA384 = [String[]] @()
+
+                if ($KnownVulnerableSample.ContainsKey("Signatures")) {
+
+                    $SampleSignatures = [Hashtable[]] $KnownVulnerableSample['Signatures']
+
+                    foreach ($SampleSignature in $SampleSignatures) {
+
+                        if ($SampleSignature.ContainsKey("Certificates")) {
+
+                            $SampleCertificates = [Hashtable[]] $SampleSignature['Certificates']
+
+                            foreach ($SampleCertificate in $SampleCertificates) {
+
+                                # Sample certificate object:
+                                #
+                                # Name                           Value
+                                # ----                           -----
+                                # SignatureAlgorithmOID          1.2.840.113549.1.1.5
+                                # Signature                      03099b8f79ef7f5930aaef68b5fae3091dbb4f82065d375fa6529f168dea1c9209446ef56deb587c30e8f9698d23730b126f47a9ae3911f82ab19bb01ac38eeb599600adce0c4db2d031a6085c2a7afce27a1d574ca865...
+                                # ValidTo                        2020-12-30 23:59:59
+                                # ValidFrom                      2012-12-21 00:00:00
+                                # IsCertificateAuthority         True
+                                # Version                        3
+                                # CertificateType                CA
+                                # Subject                        C=US, O=Symantec Corporation, CN=Symantec Time Stamping Services CA , G2
+                                # SerialNumber                   7e93ebfb7cc64e59ea4b9a77d406fc3b
+                                # IsCodeSigning                  False
+                                # TBS                            {[MD5, d0785ad36e427c92b19f6826ab1e8020], [SHA1, 365b7a9c21bd9373e49052c3e7b3e4646ddd4d43], [SHA256, c2abb7484da91a658548de089d52436175fdb760a1387d225611dc0613a1e2ff], [SHA38...
+                                # IsCA                           True
+
+                                if ($SampleCertificate.ContainsKey("TBS")) {
+
+                                    $ToBeSignedSignatures = [Hashtable] $SampleCertificate['TBS']
+
+                                    foreach ($HashAlg in @("MD5", "SHA1", "SHA256", "SHA384")) {
+                                        if ($ToBeSignedSignatures.ContainsKey($HashAlg)) {
+                                            switch ($HashAlg) {
+                                                "MD5"    { $SampleTbsMD5 += $ToBeSignedSignatures['MD5'] }
+                                                "SHA1"   { $SampleTbsSHA1 += $ToBeSignedSignatures['SHA1'] }
+                                                "SHA256" { $SampleTbsSHA256 += $ToBeSignedSignatures['SHA256'] }
+                                                "SHA384" { $SampleTbsSHA384 += $ToBeSignedSignatures['SHA384'] }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    $Result | Add-Member -MemberType "NoteProperty" -Name "TbsMD5" -Value ($SampleTbsMD5 -join ",")
+                    $Result | Add-Member -MemberType "NoteProperty" -Name "TbsSHA1" -Value ($SampleTbsSHA1 -join ",")
+                    $Result | Add-Member -MemberType "NoteProperty" -Name "TbsSHA256" -Value ($SampleTbsSHA256 -join ",")
+                    $Result | Add-Member -MemberType "NoteProperty" -Name "TbsSHA384" -Value ($SampleTbsSHA384 -join ",")
+                }
+                # else {
+                #     Write-Message Warning "[LOLDRIVERS] Sample with driver ID $($VulnerableLolDriver['Id']) does not have a 'Signatures' property."
+                # }
+
+                $Result
+                $ResultCounter += 1
+            }
+        }
+    }
+
+    end {
+        Write-Message Info "[LOLDRIVERS] Parsed $($ResultCounter)/$($KnownVulnerableSampleCounter) known vulnerable driver samples."
+    }
+}
+
 function Get-LolDriver {
 
     [CmdletBinding()]
@@ -374,6 +653,51 @@ function Get-LolDriver {
         }
 
         $Result
+    }
+}
+
+function Update-LolDriverFile {
+
+    [CmdletBinding()]
+    param ()
+
+    begin {
+        $VulnerableDriversFileName = "VulnerableDriverSamples.csv"
+    }
+
+    process {
+        # Retrieve and process LOL driver list from the LOL drivers website.
+        $LolDrivers = [Object[]] (Get-LolDriverJson)
+        if ($null -eq $LolDrivers) { return }
+
+        # Retrieve our local and processed version of the LOL driver list.
+        $LocalLolDriversContent = Get-FileContent -Type "data" -FileName $VulnerableDriversFileName -ErrorAction SilentlyContinue | Out-String
+        $LocalLolDriversContentSize = [Math]::Round($LocalLolDriversContent.Length / 1024, 2)
+
+        if (-not [String]::IsNullOrEmpty($LocalLolDriversContent)) {
+
+            $LocalLolDrivers = $LocalLolDriversContent | ConvertFrom-Csv
+
+            Write-Message Info "Found local LOL driver sample list (size=$($LocalLolDriversContentSize) KB, count=$($LocalLolDrivers.Count))."
+
+            # Compare the two lists. If they are equal, we don't need to update our local file.
+            $Comparison = Compare-Object -ReferenceObject $LocalLolDrivers -DifferenceObject $LolDrivers -Property Id
+            if ($null -eq $Comparison) {
+
+                Write-Message "Success" "The local copy of the LOL driver sample list is already up-to-date."
+                return
+            }
+        }
+
+        Write-Message Info "The local copy of the LOL driver sample list needs to be created or updated..."
+
+        # Convert the list to CSV and write to file.
+        $LolDriversCsv = $LolDrivers | ConvertTo-Csv -Delimiter "," -NoTypeInformation | Out-String
+        Set-FileContent -Type "data" -FileName $VulnerableDriversFileName -Content $LolDriversCsv
+
+        $LolDriversCsvSize = [Math]::Round($LolDriversCsv.Length / 1024, 2)
+
+        Write-Message "Success" "Updated LOL driver sample list file (size=$($LolDriversCsvSize) KB, count=$($LolDrivers.Count)): $($VulnerableDriversFileName)"
     }
 }
 
@@ -499,6 +823,7 @@ function Remove-CommentFromScriptBlock {
 }
 
 function ConvertTo-EmbeddedTextBlob {
+    [OutputType([String])]
     param([String] $Text)
     $Compressed = ConvertTo-Gzip -InputText $Text
     [System.Convert]::ToBase64String($Compressed)

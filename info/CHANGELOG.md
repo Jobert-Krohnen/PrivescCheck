@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-28
+
+### Added
+
+- Add a function in the build script to retrieve the LOL driver database in JSON format (instead of CSV).
+- Add information about signing certificates to the LOL driver list embedded into the script.
+
+### Modified
+
+- Update build script to handle LOL driver database in JSON format instead of CSV.
+- Update the Get-KnownVulnerableKernelDriver helper function to handle the updated LOL driver list structure.
+- Update the Invoke-VulnerableDriverCheck function according to the changes made to Get-KnownVulnerableKernelDriver.
+
 ## 2026-08-22
 
 ### Added

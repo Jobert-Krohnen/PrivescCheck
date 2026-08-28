@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         run: |
           . ./build/Build.ps1
-          Update-LolDriverList
+          Update-LolDriverFile
       - name: Commit and push changes (if needed)
         id: commit-and-push
         shell: bash

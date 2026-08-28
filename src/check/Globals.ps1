@@ -17,7 +17,7 @@ $script:GlobalConstant = @{
     CommonApplicationExtensions               = @( "bat", "cmd", "exe", "dll", "msi", "ps1", "reg", "vbe", "vbs" )
     ExploitablePrivileges                     = @( "SeAssignPrimaryTokenPrivilege", "SeImpersonatePrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeLoadDriverPrivilege", "SeRestorePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeBackupPrivilege", "SeManageVolumePrivilege", "SeRelabelPrivilege" )
     DangerousDefaultFileExtensionAssociations = "{{FILE_EXTENSION_ASSOCIATIONS}}"
-    VulnerableDrivers                         = "{{VULNERABLE_DRIVERS}}"
+    VulnerableDriverSamples                   = "{{VULNERABLE_DRIVERS}}"
     Checks                                    = "{{CHECKS}}"
     EndpointProtectionSignature               = "{{ENDPOINT_PROTECTION_SIGNATURES}}"
 }

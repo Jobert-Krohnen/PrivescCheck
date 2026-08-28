@@ -572,7 +572,6 @@ function Invoke-VulnerableDriverCheck {
     }
 
     process {
-
         $Candidates = Get-KernelDriver
 
         $ProgressCount = 0
@@ -582,11 +581,7 @@ function Invoke-VulnerableDriverCheck {
             Write-Progress -Activity "Checking for known vulnerable drivers ($($ProgressCount)/$($Candidates.Count)): $($Candidate.Name)" -Status "$($ProgressPercent)% Complete:" -PercentComplete $ProgressPercent
 
             $Candidate | Get-KnownVulnerableKernelDriver | ForEach-Object {
-                $ServiceObjectResult = $_ | Select-Object Name, DisplayName, ImagePath, StartMode, Type
-                $ServiceObjectResult | Add-Member -MemberType "NoteProperty" -Name "Status" -Value $(Get-ServiceStatus -Name $_.Name)
-                $ServiceObjectResult | Add-Member -MemberType "NoteProperty" -Name "Hash" -Value $_.FileHash
-                $ServiceObjectResult | Add-Member -MemberType "NoteProperty" -Name "Url" -Value $_.Url
-                $AllResults += $ServiceObjectResult
+                $AllResults += $_ | Select-Object -Property * -ExcludeProperty User,RegistryKey,RegistryPath,ImagePathResolved
             }
 
             $ProgressCount += 1
