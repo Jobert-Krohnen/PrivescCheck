@@ -701,42 +701,6 @@ function Update-LolDriverFile {
     }
 }
 
-function Update-LolDriverList {
-
-    [CmdletBinding()]
-    param ()
-
-    $VulnerableDriversFileName = "VulnerableDrivers.csv"
-
-    # Retrieve and process LOL driver list from the LOL drivers website.
-    $LolDrivers = Get-LolDriver
-    if ($null -eq $LolDrivers) {
-        Write-Message "Error" "Failed to retrieve or parse remote LOL driver list."
-        return
-    }
-
-    # Retrieve our local and processed version of the LOL driver list.
-    $LocalLolDriversContent = Get-FileContent -Type "data" -FileName $VulnerableDriversFileName -ErrorAction SilentlyContinue | Out-String
-    if ($null -ne $LocalLolDriversContent) {
-        $LocalLolDrivers = $LocalLolDriversContent | ConvertFrom-Csv
-        Write-Message "Info" "Parsed local LOL driver list (count=$($LocalLolDrivers.Count))"
-        # Compare the two lists. If they are equal, we don't need to update our local file.
-        $Comparison = Compare-Object -ReferenceObject $LocalLolDrivers -DifferenceObject $LolDrivers -Property Id,Hash
-        if ($null -eq $Comparison) {
-            Write-Message "Success" "The local copy of the LOL driver list is already up-to-date."
-            return
-        }
-    }
-
-    Write-Message "Info" "The local copy of the LOL driver list needs to be created or updated..."
-
-    # Convert the list to CSV and write to file.
-    $LolDriversCsv = $LolDrivers | ConvertTo-Csv -Delimiter "," -NoTypeInformation | Out-String
-    Set-FileContent -Type "data" -FileName $VulnerableDriversFileName -Content $LolDriversCsv
-
-    Write-Message "Success" "LOL driver list file created or updated: $($VulnerableDriversFileName)"
-}
-
 function Update-WordList {
 
     [CmdletBinding()]
