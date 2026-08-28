@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-22
+
+### Added
+
+- Add a function for parsing the local driver code integrity policy (file containing the driver block list).
+
 ## 2026-07-02
 
 ### Added
