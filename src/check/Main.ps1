@@ -883,35 +883,54 @@ function Write-ShortReport {
     $HeavyUpAndLeft = [char] 0x251B
     $RightwardsArrow = [char] 0x2192
 
-    Write-Host -ForegroundColor White "$($HeavyDownAndRight)$("$HeavyHorizontal" * 62)$($HeavyDownAndLeft)"
-    Write-Host -ForegroundColor White "$($HeavyVertical)$(" " * 17)~~~ PrivescCheck Summary ~~~$(" " * 17)$($HeavyVertical)"
-    Write-Host -ForegroundColor White "$($HeavyUpAndRight)$("$HeavyHorizontal" * 62)$($HeavyUpAndLeft)"
+    $HeavyVerticalAndRight = [char] 0x2523
+    $HeavyVerticalAndLeft = [char] 0x2528
 
     # Show only vulnerabilities, i.e. any finding that has a final severity of at
     # least "low".
-    $AllVulnerabilities = $AllResults | Where-Object { $_.Severity -ne $script:SeverityLevel::None }
+    $AllVulnerabilities = [Object[]] ($AllResults | Where-Object { $_.Severity -ne $script:SeverityLevel::None })
     $Categories = $AllVulnerabilities | Select-Object -ExpandProperty "Category" | Sort-Object -Unique
 
-    if ($null -eq $AllVulnerabilities) {
-        Write-Host -ForegroundColor White "No vulnerability found!"
-        return
-    }
+    # if ($null -eq $AllVulnerabilities) {
+    #     Write-Host -ForegroundColor White "No vulnerability found!"
+    #     return
+    # }
+
+    Write-Host -ForegroundColor White "$($HeavyDownAndRight)$("$($HeavyHorizontal)" * 62)$($HeavyDownAndLeft)"
+    Write-Host -ForegroundColor White "$($HeavyVertical)$(" " * 17)~~~ PrivescCheck Summary ~~~$(" " * 17)$($HeavyVertical)"
+    Write-Host -ForegroundColor White "$($HeavyVerticalAndRight)$("$($HeavyHorizontal)" * 62)$($HeavyVerticalAndLeft)"
+
+    # TODO: Calculate total execution time
+    $TotalExecutionTime = [TimeSpan] 0
+
+    $TotalCheckString = "Total number of checks: $($AllResults.Count)"
+    $TotalFindingString = "Total number of findings: $($AllVulnerabilities.Count)"
+    $TotalExecutionTimeString = "Total execution time: $($TotalExecutionTime.ToString("hh\:mm\:ss\.fff"))"
+
+    Write-Host "$($HeavyVertical) $($TotalCheckString) $(" " * (62 - $TotalCheckString.Length - 2))$($HeavyVertical)"
+    Write-Host "$($HeavyVertical) $($TotalFindingString) $(" " * (62 - $TotalFindingString.Length - 2))$($HeavyVertical)"
+    Write-Host "$($HeavyVertical) $($TotalExecutionTimeString) $(" " * (62 - $TotalExecutionTimeString.Length - 2))$($HeavyVertical)"
 
     foreach ($Category in $Categories) {
 
         $Vulnerabilities = $AllVulnerabilities | Where-Object { $_.Category -eq $Category } | Sort-Object -Property "DisplayName"
 
-        Write-Host -ForegroundColor White " $($Category)"
+        Write-Host -ForegroundColor White "$($HeavyVerticalAndRight)$("$($HeavyHorizontal)" * 62)$($HeavyVerticalAndLeft)"
+        Write-Host -ForegroundColor White "$($HeavyVertical) $($Category) $(" " * (62 - $Category.Length - 2))$($HeavyVertical)"
+        Write-Host -ForegroundColor White "$($HeavyVerticalAndRight)$("$($HeavyHorizontal)" * 62)$($HeavyVerticalAndLeft)"
 
         foreach ($Vulnerability in $Vulnerabilities) {
 
             $SeverityColor = Get-SeverityColor -Severity $($Vulnerability.Severity -as $script:SeverityLevel)
+            $ResultString = "- $($Vulnerability.DisplayName) $($RightwardsArrow) $($Vulnerability.Severity -as $script:SeverityLevel)"
 
-            Write-Host -NoNewline -ForegroundColor White " -"
+            Write-Host -NoNewline -ForegroundColor White "$($HeavyVertical) -"
             Write-Host -NoNewLine " $($Vulnerability.DisplayName) $($RightwardsArrow)"
-            Write-Host -ForegroundColor $SeverityColor " $($Vulnerability.Severity -as $script:SeverityLevel)"
+            Write-Host -NoNewLine -ForegroundColor $SeverityColor " $($Vulnerability.Severity -as $script:SeverityLevel)"
+            Write-Host -ForegroundColor White "$(" " * (62 - $ResultString.Length - 1))$($HeavyVertical)"
         }
     }
 
+    Write-Host -ForegroundColor White "$($HeavyUpAndRight)$("$HeavyHorizontal" * 62)$($HeavyUpAndLeft)"
     Write-Host ""
 }
