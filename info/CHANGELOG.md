@@ -6,6 +6,7 @@
 
 - Refactor Main.ps1 completely, clean up things, and allow checks to be run fully standalone (for easier testing during development).
 - Improve performance of the known vulnerable driver check by caching the known vulnerable driver sample list in memory.
+- Refactor and clean up Main.ps1 completely.
 
 ### Fixed
 

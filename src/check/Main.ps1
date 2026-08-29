@@ -45,20 +45,32 @@ function Invoke-PrivescCheck {
 
     [CmdletBinding()]
     param(
-        [switch] $Extended = $false,
-        [switch] $Audit = $false,
-        [switch] $Experimental = $false,
-        [switch] $Risky = $false,
-        [switch] $Force = $false,
-        [switch] $Silent = $false,
-        [string] $Report,
+        [Switch] $Extended = $false,
+
+        [Switch] $Audit = $false,
+
+        [Switch] $Experimental = $false,
+
+        [Switch] $Risky = $false,
+
+        [Switch] $Force = $false,
+
+        [Switch] $Silent = $false,
+
+        [ValidateNotNullOrEmpty()]
+        [String] $Report,
+
         [ValidateSet("TXT", "HTML", "CSV", "XML")]
-        [string[]] $Format
+        [String[]] $Format
     )
 
     begin {
-        # Check whether the current process has admin privileges.
-        # The following check was taken from PowerUp.ps1
+
+        # ==============================================================================
+        # Check whether the current process has admin privileges (check borrowed from
+        # PowerUp.ps1).
+        # ==============================================================================
+
         $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
         if ($IsAdmin) {
             if (-not $Force) {
@@ -67,135 +79,157 @@ function Invoke-PrivescCheck {
             }
         }
 
-        # Reset global variables.
+        # ==============================================================================
+        # Reset all the global variables and the cache before running the checks.
+        # Initialize the global check result list.
+        # ==============================================================================
+
         foreach ($VariableEntry in $($script:GlobalVariable.Keys)) {
             $script:GlobalVariable.$VariableEntry = $null
         }
 
-        # Reset global cache.
         Clear-CachedData
 
         $script:GlobalVariable.CheckResultList = @()
-        $AllChecks = New-Object System.Collections.ArrayList
-
-        # Create a StopWatch object to measure the time take by each check.
-        $StopWatch = [Diagnostics.StopWatch]::StartNew()
-        $StopWatch.Stop()
     }
 
     process {
+        $CheckList = Get-CheckList
 
-        ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.Checks | ConvertFrom-Csv | ForEach-Object {
-            [void] $AllChecks.Add($_)
-        }
+        foreach ($Check in $CheckList) {
 
-        $CheckCounter = 0
-        foreach ($Check in $AllChecks) {
+            # ==============================================================================
+            # Determine whether this check should be run based on the parameters supplied by
+            # the user. By default, we consider that the check should not be executed.
+            # ==============================================================================
 
-            $CheckCounter += 1
-
-            # Run the check only if the user wants it.
             $IgnoreCheck = $true
+
             switch ($Check.Type) {
-                "Base" { $IgnoreCheck = $false }
-                "Extended" { if ($Extended) { $IgnoreCheck = $false } }
-                "Audit" { if ($Audit) { $IgnoreCheck = $false } }
+                "Base"         { $IgnoreCheck = $false }
+                "Extended"     { if ($Extended)     { $IgnoreCheck = $false } }
+                "Audit"        { if ($Audit)        { $IgnoreCheck = $false } }
                 "Experimental" { if ($Experimental) { $IgnoreCheck = $false } }
                 default {
-                    throw "Unhandled check type for '$($Check.Id)': $($Check.Type)"
+                    throw "[MAIN] Check type '$($Check.Type)' is unknown (ID=$($Check.Id))."
                 }
             }
+
+            # ==============================================================================
+            # If we have determined that the check should not be run based on the user-
+            # supplied options, move on to the next one. Otherwise, we now consider that the
+            # check should be run by default.
+            # ==============================================================================
+
+            if ($IgnoreCheck) { continue } else { $IgnoreCheck = $false }
+
+            # ==============================================================================
+            # If the current process is running with administrator privileges, we want to
+            # make sure that the check's 'RunIfAdmin' property is set to true.
+            # ==============================================================================
+
+            if ($IsAdmin -and (-not [Convert]::ToBoolean($Check.RunIfAdmin))) {
+                Write-Warning "Check '$($Check.DisplayName)' won't give proper results when run as an administrator, ignoring..."
+                $IgnoreCheck = $true
+            }
+
+            # ==============================================================================
+            # If the current check is identified as 'Risky', we want to make sure that the
+            # user used '-Risky' option, otherwise we won't execute it.
+            # ==============================================================================
+
+            if ([Convert]::ToBoolean($Check.Risky) -and (-not $Risky)) {
+                Write-Warning "Check '$($Check.DisplayName)' is categorized as risky, but the option '-Risky' was not specified, ignoring..."
+                $IgnoreCheck = $true
+            }
+
+            # ==============================================================================
+            # If we have determined that the check should not be executed, move on to the
+            # next one. Otherwise, execute it.
+            # ==============================================================================
 
             if ($IgnoreCheck) { continue }
 
-            # If the current user is an admin but the check's 'RunIfAdmin' flag was not set to true, ignore it.
-            if ($IsAdmin -and (-not [System.Convert]::ToBoolean($Check.RunIfAdmin))) {
-                Write-Warning "Check '$($Check.DisplayName)' won't give proper results when run as an administrator, ignoring..."
-                continue
-            }
-
-            # If the check is "risky", but the option -Risky was not specified, ignore it.
-            if ([System.Convert]::ToBoolean($Check.Risky) -and (-not $Risky)) {
-                Write-Warning "Check '$($Check.DisplayName)' is categorized as risky, but the option '-Risky' was not specified, ignoring..."
-                continue
-            }
-
-            if (-not $Silent) { Write-CheckBanner -Check $Check }
-
-            # Set the default base severity level of the check based on the information stored in the input
-            # CSV file.
-            $Check | Add-Member -MemberType "NoteProperty" -Name "BaseSeverity" -Value $($Check.Severity -as $script:SeverityLevel)
-
-            # Reset and start the StopWatch.
-            $StopWatch.Reset()
-            $StopWatch.Start()
-
-            # Run the check.
-            $CheckResult = Invoke-Check -Check $Check
-            $CheckResult.Severity = $CheckResult.Severity -as $script:SeverityLevel
-
-            # Stop the StopWatch and add the elapsed time object as a new property to the check result.
-            $StopWatch.Stop()
-            $CheckResult | Add-Member -MemberType "NoteProperty" -Name "TimeElapsed" -Value $StopWatch.Elapsed
-
-            if (-not $Silent) {
-                # If the 'Silent' option was not specified, print a banner that shows some information about the
-                # current check. Then, run the check and print the output either as a table or a list, depending on
-                # the 'Format' value in the CSV data.
-                Write-CheckResult -CheckResult $CheckResult
-            }
-            else {
-                # If the 'Silent' option was specified, don't print the output of the check but write a progress bar
-                # and show the name of the check which is being run. Note: if we are not running in a console window
-                # Write-Progress will fail, so use Write-Output to print the completion percentage instead.
-                $Completion = [UInt32](($CheckCounter * 100) / ($AllChecks.Count))
-
-                if (Test-IsRunningInConsole) {
-                    Write-Progress -Activity "$($Check.Category.ToUpper()) > $($Check.DisplayName)" -Status "Progress: $($Completion)%" -PercentComplete $Completion
-                }
-                else {
-                    Write-Output "[$($Completion)%] $($Check.Category.ToUpper()) > $($Check.DisplayName)"
-                }
-            }
+            Invoke-Check -Id $Check.Id -List $CheckList -Silent:$Silent
         }
 
         # Print a report on the terminal as an 'ASCII-art' table with colors using 'Write-Host'. Therefore,
         # this will be only visible if run from a 'real' terminal.
         # Show-PrivescCheckAsciiReport
-        Write-ShortReport
 
-        # If the 'Report' option was specified, write a report to a file using the value of this parameter
-        # as the basename (or path + basename). The extension is then determined based on the chosen
-        # format(s).
+        # ==============================================================================
+        # All the checks have been executed. We can now print a short report summarizing
+        # the findings and their severity level.
+        # ==============================================================================
+
+        if (-not $Silent) {
+            Write-ShortReport -AllResults $script:GlobalVariable.CheckResultList
+        }
+
+        # ==============================================================================
+        # If the '-Report' option was used, generate report files. If no explicit format
+        # was specified, assume 'TXT' by default.
+        # ==============================================================================
+
         if ($Report) {
 
-            if (-not $Format) {
+            if ($null -eq $Format) {
                 # If a format or a format list was not specified, default to the TXT format.
-                [string[]] $Format = "TXT"
+                $Format = [String[]] @("TXT")
             }
 
             $Format | ForEach-Object {
-                # For each format, build the name of the output report file as BASENAME + . + EXT. Then generate the
-                # report corresponding to the current format and write it to a file using the previously formatted
-                # filename.
+
+                # ==============================================================================
+                # For each format, build the name of the output report file as BASENAME||.||EXT.
+                # Then, generate the report corresponding to the current format and write the
+                # output to a file using the previously formatted filename or file path.
+                # ==============================================================================
+
                 $ReportFileName = "$($Report.Trim()).$($_.ToLower())"
+
                 switch ($_) {
-                    "TXT" { Write-TxtReport  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    "HTML" { Write-HtmlReport -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    "CSV" { Write-CsvReport  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    "XML" { Write-XmlReport  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    default { Write-Warning "`nReport format not implemented: $($Format.ToUpper())`n" }
+                    "TXT"  { Write-TxtReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
+                    "HTML" { Write-HtmlReportOutput -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
+                    "CSV"  { Write-CsvReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
+                    "XML"  { Write-XmlReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
+                    default {
+                        throw "[MAIN] Report output file format '$($_.ToUpper())' is unknown."
+                    }
                 }
             }
         }
     }
 
     end {
-        # If the 'Extended' mode was not specified, print a warning message, unless the 'Force' parameter
-        # was specified.
+
+        # ==============================================================================
+        # If the '-Extended' option was not used, print a warning message to show the
+        # user that more information can be obtained in this mode, unless the '-Force'
+        # switch is present.
+        # ==============================================================================
+
         if ((-not $Extended) -and (-not $Force) -and (-not $Silent)) {
             Write-Warning "To get more info, run this script with the option '-Extended'."
         }
+    }
+}
+
+function Get-CheckList {
+
+    [OutputType([Object[]])]
+    [CmdletBinding()]
+    param ()
+
+    process {
+        if (-not (Test-CachedData -Name "CheckList")) {
+
+            $CheckList = [Object[]] (ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.Checks | ConvertFrom-Csv)
+
+            Set-CachedData -Name "CheckList" -Data $CheckList
+        }
+
+        Get-CachedData -Name "CheckList"
     }
 }
 
@@ -203,7 +237,7 @@ function Invoke-DynamicCommand {
 
     [CmdletBinding()]
     param(
-        [string] $Command
+        [String] $Command
     )
 
     process {
@@ -215,68 +249,179 @@ function Invoke-DynamicCommand {
 function Invoke-Check {
 
     [CmdletBinding()]
-    param(
-        [object] $Check
+    param (
+        [Parameter(Mandatory=$true)]
+        [String] $Id,
+
+        [Object[]] $List,
+
+        [Switch] $Silent = $false
     )
 
-    $Check.Severity = $Check.Severity -as $script:SeverityLevel
+    begin {
+        $CheckId = $Id
 
-    $Result = Invoke-DynamicCommand -Command "$($Check.Command) -BaseSeverity $([UInt32] $Check.BaseSeverity)"
-    $Check | Add-Member -MemberType "NoteProperty" -Name "ResultRaw" -Value $Result.Result
-    $Check.Severity = $Result.Severity -as $script:SeverityLevel
+        # ==============================================================================
+        # If the check list is not passed as an input parameters, retrieve it from the
+        # cache.
+        # ==============================================================================
 
-    if ($Check.Format -eq "Table") {
-        $Check | Add-Member -MemberType "NoteProperty" -Name "ResultRawString" -Value $($Check.ResultRaw | Format-Table | Out-String)
+        if ($null -eq $List) {
+            $CheckList = Get-CheckList
+        }
+        else {
+            $CheckList = $List
+        }
+
+        # ==============================================================================
+        # Create a StopWatch object to measure the time taken by each check.
+        # ==============================================================================
+
+        $StopWatch = [Diagnostics.StopWatch]::StartNew()
+        $StopWatch.Stop()
     }
-    elseif ($Check.Format -eq "List") {
-        $Check | Add-Member -MemberType "NoteProperty" -Name "ResultRawString" -Value $($Check.ResultRaw | Format-List | Out-String)
-    }
 
-    $script:GlobalVariable.CheckResultList += $Check
-    $Check
+    process {
+        if ($null -eq $CheckList) {
+            throw "[MAIN] CHeck list is null or empty."
+        }
+
+        # ==============================================================================
+        # Retrieve the Check object with provided ID from the cached check list.
+        # ==============================================================================
+
+        $Check = $CheckList | Where-Object { $_.Id -eq $CheckId }
+
+        if ($null -eq $CheckId) {
+            throw "[MAIN] Check ID '$($CheckId)' was not found in the check list."
+        }
+
+        # ==============================================================================
+        # Don't show the check's banned if the Silent option is used.
+        # ==============================================================================
+
+        if (-not $Silent) { Write-CheckBannerOutput -Check $Check }
+
+        # ==============================================================================
+        # Set the check's base severity level according to the check's "Severity"
+        # property.
+        # ==============================================================================
+
+        $Check | Add-Member -MemberType "NoteProperty" -Name "BaseSeverity" -Value $($Check.Severity -as $script:SeverityLevel)
+
+        # ==============================================================================
+        # Reset and start the StopWatch.
+        # ==============================================================================
+
+        $StopWatch.Reset()
+        $StopWatch.Start()
+
+        # ==============================================================================
+        # Run the check and format the check's output.
+        # ==============================================================================
+
+        $CheckResult = Invoke-DynamicCommand -Command "$($Check.Command) -BaseSeverity $([UInt32] $Check.BaseSeverity)"
+        $Check | Add-Member -MemberType "NoteProperty" -Name "ResultRaw" -Value $CheckResult.Result
+        $Check.Severity = $CheckResult.Severity -as $script:SeverityLevel
+
+        if ($Check.Format -eq "Table") {
+            $Check | Add-Member -MemberType "NoteProperty" -Name "ResultRawString" -Value $($Check.ResultRaw | Format-Table | Out-String)
+        }
+        elseif ($Check.Format -eq "List") {
+            $Check | Add-Member -MemberType "NoteProperty" -Name "ResultRawString" -Value $($Check.ResultRaw | Format-List | Out-String)
+        }
+
+        $script:GlobalVariable.CheckResultList += $Check
+
+        # ==============================================================================
+        # Stop the StopWatch and add the elapsed time object as a new property to the
+        # check result.
+        # ==============================================================================
+
+        $StopWatch.Stop()
+        $Check | Add-Member -MemberType "NoteProperty" -Name "TimeElapsed" -Value $StopWatch.Elapsed
+
+        # ==============================================================================
+        # Show the check's output, unless the "Silent" option was used.
+        # ==============================================================================
+
+        if ($Silent) {
+            Write-CheckResultShort -Check $Check
+        }
+        else {
+            Write-CheckResult -Check $Check
+        }
+    }
 }
 
 function ConvertFrom-EmbeddedTextBlob {
-    param([String] $TextBlob)
-    $Decoded = [System.Convert]::FromBase64String($TextBlob)
-    ConvertFrom-Gzip -InputBuffer $Decoded
+
+    [OutputType([String])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [String] $TextBlob
+    )
+
+    process {
+        $Decoded = [Convert]::FromBase64String($TextBlob)
+        ConvertFrom-Gzip -InputBuffer $Decoded
+    }
 }
 
 function Get-SeverityColor {
 
-    param (
+    [OutputType([String])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
         [UInt32] $Severity
     )
 
-    switch ($Severity -as $script:SeverityLevel) {
-        $script:SeverityLevel::Low    { "DarkCyan" }
-        $script:SeverityLevel::Medium { "DarkYellow" }
-        $script:SeverityLevel::High   { "Red" }
-        default { Write-Warning "Get-SeverityColor > Unhandled severity level: $($Severity)" }
+    process {
+        $SeverityLevel = $Severity -as $script:SeverityLevel
+        switch ($SeverityLevel) {
+            $script:SeverityLevel::Low    { "DarkCyan" }
+            $script:SeverityLevel::Medium { "DarkYellow" }
+            $script:SeverityLevel::High   { "Red" }
+            default {
+                throw "[MAIN] Severity level '$($SeverityLevel)' is unknown."
+            }
+        }
     }
 }
 
+function Write-CheckBannerOutput {
 
-function Write-CheckBanner {
-
-    [OutputType([string])]
+    [OutputType([String])]
     [CmdletBinding()]
     param(
-        [object] $Check,
-        [switch] $Ascii
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object] $Check,
+
+        [Switch] $Ascii
     )
 
     function Split-Description {
-        param([string] $Description)
 
-        $DescriptionSplit = New-Object System.Collections.ArrayList
+        param(
+            [String] $Description
+        )
+
+        # TODO: clean up
+        # $DescriptionSplit = New-Object System.Collections.ArrayList
+        $DescriptionSplit = [String[]] @()
         $TempOld = ""
         $TempNew = ""
         $Description.Split(' ') | ForEach-Object {
 
             $TempNew = "$($TempOld) $($_)".Trim()
             if ($TempNew.Length -gt 60) {
-                [void] $DescriptionSplit.Add($TempOld)
+                # [void] $DescriptionSplit.Add($TempOld)
+                $DescriptionSplit += $TempOld
                 $TempOld = "$($_)"
             }
             else {
@@ -284,8 +429,10 @@ function Write-CheckBanner {
             }
         }
         if ($TempOld) {
-            [void] $DescriptionSplit.Add($TempOld)
+            # [void] $DescriptionSplit.Add($TempOld)
+            $DescriptionSplit += $TempOld
         }
+
         $DescriptionSplit
     }
 
@@ -313,26 +460,46 @@ function Write-CheckBanner {
     $Result
 }
 
+function Write-CheckResultShort {
+
+    [OutputType([String])]
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object] $Check
+    )
+
+    process {
+        $Severity = $(if ($Check.Severity) { $Check.Severity } else { $script:SeverityLevel::None }) -as $script:SeverityLevel
+        "[CATEGORY=$($Check.Category.ToUpper())][TEST=$($Check.DisplayName)][SEVERITY=$($Severity)][TIME=$($Check.TimeElapsed.ToString("hh\:mm\:ss\.fff"))]"
+    }
+}
+
 function Write-CheckResult {
 
-    [OutputType([string])]
+    [OutputType([String])]
     [CmdletBinding()]
     param(
-        [Object] $CheckResult
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object] $Check
     )
 
     begin {
         $ResultOutput = ""
-        $IsVulnerabilityCheck = $CheckResult.BaseSeverity -ne $script:SeverityLevel::None
-        $Severity = $(if ($CheckResult.Severity) { $CheckResult.Severity } else { $script:SeverityLevel::None }) -as $script:SeverityLevel
+        $IsVulnerabilityCheck = $Check.BaseSeverity -ne $script:SeverityLevel::None
+        $Severity = $(if ($Check.Severity) { $Check.Severity } else { $script:SeverityLevel::None }) -as $script:SeverityLevel
     }
 
     process {
         # Show the raw output of the check first.
-        switch ($CheckResult.Format) {
-            "Table" { $ResultOutput += $CheckResult.ResultRaw | Format-Table -AutoSize | Out-String }
-            "List" { $ResultOutput += $CheckResult.ResultRaw | Format-List | Out-String }
-            default { throw "Unknown output format: $($CheckResult.Format)" }
+        switch ($Check.Format) {
+            "Table" { $ResultOutput += $Check.ResultRaw | Format-Table -AutoSize | Out-String }
+            "List" { $ResultOutput += $Check.ResultRaw | Format-List | Out-String }
+            default {
+                throw "[MAIN] Check output format '$($Check.Format)' is unknown (ID=$($Check.Id))."
+            }
         }
 
         # Then show a status message.
@@ -344,7 +511,7 @@ function Write-CheckResult {
                 $ResultOutput += " (not vulnerable)"
             }
             else {
-                if (-not $CheckResult.ResultRaw) {
+                if (-not $Check.ResultRaw) {
                     $ResultOutput += " (nothing found)"
                 }
             }
@@ -353,37 +520,43 @@ function Write-CheckResult {
             $ResultOutput += " Vulnerable"
         }
 
-        $ResultOutput += " - Severity: $($Severity) - Execution time: $($CheckResult.TimeElapsed.ToString("hh\:mm\:ss\.fff"))"
+        $ResultOutput += " - Severity: $($Severity) - Execution time: $($Check.TimeElapsed.ToString("hh\:mm\:ss\.fff"))"
         $ResultOutput += "`n`n"
 
         $ResultOutput
     }
 }
 
-function Write-TxtReport {
+function Write-TxtReportOutput {
 
+    [OutputType([String])]
     [CmdletBinding()]
     param(
-        [object[]] $AllResults
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object[]] $AllResults
     )
 
     $AllResults | ForEach-Object {
-        Write-CheckBanner -Check $_ -Ascii
-        Write-CheckResult -CheckResult $_
+        Write-CheckBannerOutput -Check $_ -Ascii
+        Write-CheckResult -Check $_
     }
 }
 
-function Write-CsvReport {
+function Write-CsvReportOutput {
 
+    [OutputType([String])]
     [CmdletBinding()]
     param(
-        [object[]] $AllResults
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object[]] $AllResults
     )
 
     $AllResults | Sort-Object -Property "Category", "DisplayName" | Select-Object Id, Category, DisplayName, Description, Severity, ResultRawString | ConvertTo-Csv -NoTypeInformation
 }
 
-function Write-XmlReport {
+function Write-XmlReportOutput {
     <#
     .NOTES
     According to the XML specification, some characters are invalid. The raw result of a check ("ResultRawString") may contain such characters. Therefore, this result must be sanitized before calling "ConvertTo-Xml". The method used here was taken from a solution that was posted on StackOverflow.
@@ -393,24 +566,29 @@ function Write-XmlReport {
     https://stackoverflow.com/questions/45706565/how-to-remove-special-bad-characters-from-xml-using-powershell
     #>
 
+    [OutputType([String])]
     [CmdletBinding()]
     param(
-        [object[]] $AllResults
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object[]] $AllResults
     )
 
     $AuthorizedXmlCharactersRegex = "[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]"
     $AllResults | ForEach-Object {
-        $_.ResultRawString = [System.Text.RegularExpressions.Regex]::Replace($_.ResultRawString, $AuthorizedXmlCharactersRegex, "")
+        $_.ResultRawString = [Text.RegularExpressions.Regex]::Replace($_.ResultRawString, $AuthorizedXmlCharactersRegex, "")
         $_
     } | Sort-Object -Property "Category", "DisplayName" | Select-Object Id, Category, DisplayName, Description, Severity, ResultRawString | ConvertTo-Xml -As String
 }
 
-function Write-HtmlReport {
+function Write-HtmlReportOutput {
 
-    [OutputType([string])]
+    [OutputType([String])]
     [CmdletBinding()]
     param(
-        [object[]] $AllResults
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object[]] $AllResults
     )
 
     $JavaScript = @"
@@ -687,7 +865,11 @@ $($JavaScript)
 function Write-ShortReport {
 
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [Object[]] $AllResults
+    )
 
     $HeavyVertical = [char] 0x2503
     # $HeavyVerticalAndRight = [char] 0x2523
@@ -707,7 +889,7 @@ function Write-ShortReport {
 
     # Show only vulnerabilities, i.e. any finding that has a final severity of at
     # least "low".
-    $AllVulnerabilities = $script:GlobalVariable.CheckResultList | Where-Object { $_.Severity -ne $script:SeverityLevel::None }
+    $AllVulnerabilities = $AllResults | Where-Object { $_.Severity -ne $script:SeverityLevel::None }
     $Categories = $AllVulnerabilities | Select-Object -ExpandProperty "Category" | Sort-Object -Unique
 
     if ($null -eq $AllVulnerabilities) {
