@@ -1131,18 +1131,18 @@ function Invoke-ComServerImagePermissionCheck {
         $Candidates = Get-ComClassFromRegistry | Where-Object { ($_.HandlerType -like "*server*") -and ($null -ne $_.HandlerData) }
         $ProgressCount = 0
         $ProgressIter = [UInt32] ($Candidates.Count / 100)
-        Write-Progress -Activity "Checking COM server image permissions (0/$($Candidates.Count))..." -Status "0% Complete:" -PercentComplete 0
+        Write-Progress -Activity "Checking COM server image file permissions (0/$($Candidates.Count))..." -Status "0% Complete:" -PercentComplete 0
         foreach ($Candidate in $Candidates) {
             Get-ModifiableComClassEntryImagePath -ComClassEntry $Candidate | ForEach-Object {
                 $Results += $_
             }
             if (($ProgressCount % $ProgressIter) -eq 0) {
                 $ProgressPercent = [UInt32] ($ProgressCount * 100 / $Candidates.Count)
-                Write-Progress -Activity "Checking COM server image permissions ($($ProgressCount)/$($Candidates.Count))..." -Status "$($ProgressPercent)% Complete:" -PercentComplete $ProgressPercent
+                Write-Progress -Activity "Checking COM server image file permissions ($($ProgressCount)/$($Candidates.Count))..." -Status "$($ProgressPercent)% Complete:" -PercentComplete $ProgressPercent
             }
             $ProgressCount += 1
         }
-        Write-Progress -Activity "Checking COM server image permissions ($($Candidates.Count)/$($Candidates.Count))..." -Status "100% Complete:" -Completed
+        Write-Progress -Activity "Checking COM server image file permissions ($($Candidates.Count)/$($Candidates.Count))..." -Status "100% Complete:" -Completed
 
         $CheckResult = New-Object -TypeName PSObject
         $CheckResult | Add-Member -MemberType "NoteProperty" -Name "Result" -Value $Results
