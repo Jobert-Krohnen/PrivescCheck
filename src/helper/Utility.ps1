@@ -971,16 +971,24 @@ function Get-KnownVulnerableKernelDriverSampleList {
     [CmdletBinding()]
     param ()
 
-    $VulnerableDriverSampleList = ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.VulnerableDriverSamples | ConvertFrom-Csv
-    if ($null -eq $VulnerableDriverSampleList) {
-        Write-Warning "Failed to retrieve the list of known vulnerable driver samples."
-        return
+    if (-not (Test-CachedData -Name "KnownVulnerableDriverSampleList")) {
+
+        $KnownVulnerableDriverSampleList = [Object[]] (ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.VulnerableDriverSamples | ConvertFrom-Csv)
+
+        if ($null -eq $KnownVulnerableDriverSampleList) {
+            Write-Warning "Failed to retrieve the list of known vulnerable driver samples."
+            return
+        }
+
+        $KnownVulnerableDriverSampleList | ForEach-Object {
+            $_ | Add-Member -MemberType "NoteProperty" -Name "Url" -Value "https://www.loldrivers.io/drivers/$($_.Id)"
+            $_
+        }
+
+        Set-CachedData -Name "KnownVulnerableDriverSampleList" -Data $KnownVulnerableDriverSampleList
     }
 
-    $VulnerableDriverSampleList | ForEach-Object {
-        $_ | Add-Member -MemberType "NoteProperty" -Name "Url" -Value "https://www.loldrivers.io/drivers/$($_.Id)"
-        $_
-    }
+    Get-CachedData -Name "KnownVulnerableDriverSampleList"
 }
 
 function Resolve-CommandLine {

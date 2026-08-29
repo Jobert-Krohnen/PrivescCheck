@@ -567,18 +567,16 @@ function Invoke-VulnerableDriverCheck {
         [UInt32] $BaseSeverity
     )
 
-    begin {
-        $AllResults = @()
-    }
-
     process {
+        $AllResults = @()
         $Candidates = Get-KernelDriver
+        $SampleList = [Object[]] (Get-KnownVulnerableKernelDriverSampleList)
 
         $ProgressCount = 0
-        Write-Progress -Activity "Checking for known vulnerable drivers (0/$($Candidates.Count))..." -Status "0% Complete:" -PercentComplete 0
+        Write-Progress -Activity "Checking for known vulnerable drivers (0/$($Candidates.Count)) against $($SampleList.Count) samples..." -Status "0% Complete:" -PercentComplete 0
         foreach ($Candidate in $Candidates) {
             $ProgressPercent = [UInt32] ($ProgressCount * 100 / $Candidates.Count)
-            Write-Progress -Activity "Checking for known vulnerable drivers ($($ProgressCount)/$($Candidates.Count)): $($Candidate.Name)" -Status "$($ProgressPercent)% Complete:" -PercentComplete $ProgressPercent
+            Write-Progress -Activity "Checking for known vulnerable drivers ($($ProgressCount)/$($Candidates.Count)) against $($SampleList.Count) samples: $($Candidate.Name)" -Status "$($ProgressPercent)% Complete:" -PercentComplete $ProgressPercent
 
             $Candidate | Get-KnownVulnerableKernelDriver | ForEach-Object {
                 $AllResults += $_ | Select-Object -Property * -ExcludeProperty User,RegistryKey,RegistryPath,ImagePathResolved
@@ -586,7 +584,7 @@ function Invoke-VulnerableDriverCheck {
 
             $ProgressCount += 1
         }
-        Write-Progress -Activity "Checking for known vulnerable drivers ($($Candidates.Count)/$($Candidates.Count))..." -Status "100% Complete:" -Completed
+        Write-Progress -Activity "Checking for known vulnerable drivers ($($Candidates.Count)/$($Candidates.Count)) against $($SampleList.Count) samples..." -Status "100% Complete:" -Completed
 
         $CheckResult = New-Object -TypeName PSObject
         $CheckResult | Add-Member -MemberType "NoteProperty" -Name "Result" -Value $AllResults
