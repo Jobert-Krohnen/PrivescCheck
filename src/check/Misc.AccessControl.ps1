@@ -246,13 +246,12 @@ function Invoke-ExploitableLeakedHandleCheck {
             }
 
             $DuplicatedHandles += $InheritedHandleDuplicated
-
-            if (($InheritedHandle.GrantedAccess -ne 0x0012019f) -and ($InheritedHandle.GrantedAccess -ne 0x1A019F) -and ($InheritedHandle.GrantedAccess -ne 0x1048576f) -and ($InheritedHandle.GrantedAccess -ne 0x120189)) {
-                $InheritedHandleName = Get-ObjectName -ObjectHandle $InheritedHandleDuplicated
-            }
-
             $CandidateHandle = $InheritedHandle.PSObject.Copy()
-            $CandidateHandle | Add-Member -MemberType "NoteProperty" -Name "ObjectName" -Value $InheritedHandleName
+
+            if (@(0x12019f, 0x1a019f, 0x1048576f, 0x120189, 0x16019f) -notcontains $InheritedHandle.GrantedAccess) {
+                $InheritedHandleName = Get-ObjectName -ObjectHandle $InheritedHandleDuplicated
+                $CandidateHandle | Add-Member -MemberType "NoteProperty" -Name "ObjectName" -Value $InheritedHandleName
+            }
 
             # Determine exploitability depending on object type...
 

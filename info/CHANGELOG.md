@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-29
+
+### Modified
+
+- Refactor Main.ps1 completely, clean up things, and allow checks to be run fully standalone (for easier testing during development).
+
+### Fixed
+
+- Fix an issue in the "exploitable leaked handle" check where NtQueryObject would hang when querying certain device file objects.
+
 ## 2026-08-28
 
 ### Added
