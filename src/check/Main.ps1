@@ -411,8 +411,6 @@ function Write-CheckBannerOutput {
             [String] $Description
         )
 
-        # TODO: clean up
-        # $DescriptionSplit = New-Object System.Collections.ArrayList
         $DescriptionSplit = [String[]] @()
         $TempOld = ""
         $TempNew = ""
@@ -420,7 +418,6 @@ function Write-CheckBannerOutput {
 
             $TempNew = "$($TempOld) $($_)".Trim()
             if ($TempNew.Length -gt 60) {
-                # [void] $DescriptionSplit.Add($TempOld)
                 $DescriptionSplit += $TempOld
                 $TempOld = "$($_)"
             }
@@ -429,7 +426,6 @@ function Write-CheckBannerOutput {
             }
         }
         if ($TempOld) {
-            # [void] $DescriptionSplit.Add($TempOld)
             $DescriptionSplit += $TempOld
         }
 
@@ -891,17 +887,12 @@ function Write-ShortReport {
     $AllVulnerabilities = [Object[]] ($AllResults | Where-Object { $_.Severity -ne $script:SeverityLevel::None })
     $Categories = $AllVulnerabilities | Select-Object -ExpandProperty "Category" | Sort-Object -Unique
 
-    # if ($null -eq $AllVulnerabilities) {
-    #     Write-Host -ForegroundColor White "No vulnerability found!"
-    #     return
-    # }
-
     Write-Host -ForegroundColor White "$($HeavyDownAndRight)$("$($HeavyHorizontal)" * 62)$($HeavyDownAndLeft)"
     Write-Host -ForegroundColor White "$($HeavyVertical)$(" " * 17)~~~ PrivescCheck Summary ~~~$(" " * 17)$($HeavyVertical)"
     Write-Host -ForegroundColor White "$($HeavyVerticalAndRight)$("$($HeavyHorizontal)" * 62)$($HeavyVerticalAndLeft)"
 
-    # TODO: Calculate total execution time
     $TotalExecutionTime = [TimeSpan] 0
+    $AllVulnerabilities | ForEach-Object { $TotalExecutionTime += $_.TimeElapsed }
 
     $TotalCheckString = "Total number of checks: $($AllResults.Count)"
     $TotalFindingString = "Total number of findings: $($AllVulnerabilities.Count)"
