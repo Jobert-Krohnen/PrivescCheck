@@ -6,7 +6,9 @@ function Invoke-Build {
         [ValidateSet("PrivescCheck")]
         [String] $Name,
 
-        [Switch] $NoNewSeed
+        [Switch] $NoNewSeed,
+
+        [Switch] $NoNewKey
     )
 
     begin {
@@ -49,14 +51,34 @@ function Invoke-Build {
             Set-FileContent -Type "build" -FileName "Seed.txt" -Content "$($Seed)"
         }
 
+        if ($NoNewKey) {
+            $EncryptionKeyHexString = Get-FileContent -Type "build" -FileName "EncryptionKey.txt" -ErrorAction SilentlyContinue | Out-String
+            if ([String]::IsNullOrEmpty($EncryptionKeyHexString)) {
+                Write-Message Error "Failed to read encryption key from file."
+                $SanityCheck = $false
+            }
+            else {
+                $EncryptionKeyHexString = $EncryptionKeyHexString.Trim()
+                Write-Message Info "Using encryption key: $($EncryptionKeyHexString)"
+                $EncryptionKey = New-Object -TypeName Byte[] -ArgumentList ($EncryptionKeyHexString.Length / 2)
+                for ($i = 0; $i -lt ($EncryptionKeyHexString.Length / 2); $i++) {
+                    $EncryptionKey[$i] = [Convert]::ToByte($EncryptionKeyHexString.Substring($i * 2, 2), 16)
+                }
+            }
+        }
+        else {
+            $EncryptionKey = New-RandomByteArray -Size 32
+            $EncryptionKeyHexString = [System.BitConverter]::ToString($EncryptionKey).ToLower() -replace '-',''
+            Write-Message Info "Generated encryption key: $($EncryptionKeyHexString)"
+            Set-FileContent -Type "build" -FileName "EncryptionKey.txt" -Content "$($EncryptionKeyHexString)"
+        }
+
         # https://learn.microsoft.com/en-us/dotnet/api/system.platformid
         $CurrentPlatform = [System.Environment]::OSVersion.Platform
         $TestModuleImport = $CurrentPlatform -eq "Win32NT"
         if ($TestModuleImport -eq $false) {
             Write-Message Warning "Unsupported platform for module import testing: $($CurrentPlatform)"
         }
-
-        $EncryptionKey = New-RandomByteArray -Size 32
     }
 
     process {
@@ -191,7 +213,7 @@ function Invoke-Build {
             Write-Message Success "Build successful, writing result to file '$($ScriptPath)'..."
             $ScriptContent += "`r`n$(Get-ScriptLoader -Modules $Modules -EncodedKey ([System.Convert]::ToBase64String($EncryptionKey)))"
             $ScriptContent | Out-File -FilePath $ScriptPath -Encoding ascii
-            Write-Message Info "File hash: $((Get-FileHash -Path $ScriptPath).Hash)"
+            Write-Message Info "File hash: $((Get-FileHash -Path $ScriptPath).Hash.ToLower())"
         }
         else {
             Write-Message Error "Build failed, check the build logs for more information."
@@ -862,7 +884,8 @@ function ConvertTo-AesEncrypted {
     $AesAlg = [System.Security.Cryptography.Aes]::Create()
 
     $AesAlg.Key = $Key
-    $AesAlg.IV = New-RandomByteArray -Size 16
+    # Fixe IV is bad, but we are not doing real cryptography, just obfuscation.
+    $AesAlg.IV = [Byte[]] @(0xde, 0xad, 0xbe, 0xef, 0x8b, 0xad, 0xf0, 0x0d, 0xca, 0xfe, 0xba, 0xbe, 0xfa, 0xce, 0xfe, 0xed)
 
     $Encryptor = $AesAlg.CreateEncryptor()
     $MemoryStream = New-Object IO.MemoryStream

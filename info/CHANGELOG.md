@@ -5,6 +5,7 @@
 ### Modified
 
 - Set output file encoding to "unicode" explicitly rather than relying on the OS decision.
+- Modify build script to add an option for reusing the encryption key across runs.
 
 ## 2026-09-01
 
