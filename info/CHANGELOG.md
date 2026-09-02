@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-02
+
+### Modified
+
+- Set output file encoding to "unicode" explicitly rather than relying on the OS decision.
+
 ## 2026-09-01
 
 ### Added

@@ -189,10 +189,10 @@ function Invoke-PrivescCheck {
                 $ReportFileName = "$($Report.Trim()).$($_.ToLower())"
 
                 switch ($_) {
-                    "TXT"  { Write-TxtReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    "HTML" { Write-HtmlReportOutput -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    "CSV"  { Write-CsvReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
-                    "XML"  { Write-XmlReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName }
+                    "TXT"  { Write-TxtReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName -Encoding unicode }
+                    "HTML" { Write-HtmlReportOutput -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName -Encoding unicode }
+                    "CSV"  { Write-CsvReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName -Encoding unicode }
+                    "XML"  { Write-XmlReportOutput  -AllResults $script:GlobalVariable.CheckResultList | Out-File $ReportFileName -Encoding unicode }
                     default {
                         throw "[MAIN] Report output file format '$($_.ToUpper())' is unknown."
                     }
