@@ -153,7 +153,37 @@ msf6 exploit(multi/handler) > sessions -t 120 -i 1
 meterpreter > powershell_execute "Invoke-PrivescCheck"
 ```
 
+## :building_construction: Build
+
+### Update the Data
+
+Some of the checks rely on online data (*e.g.* LOL drivers database), but the script is intended to work offline. To solve this issue, the data is embedded into the script, and therefore needs to be regularly updated. This process is fully automated in the official release, but if you want to build the script locally, you can optionally do this manually.
+
+```bat
+powershell -ep bypass ". .\build\Build.ps1; Update-LolDriverFile"
+```
+
+### Build the Script
+
+Building the script is as simple as running the command below. The output file will be saved in the `.\dist\` folder.
+
+```bat
+powershell -ep bypass ". .\build\Build.ps1; Invoke-Build -Name PrivescCheck"
+```
+
+The build script uses a pseudo-random number generator with a randomly-generated **seed** to pick a variable name for each module. If you want to generate reproducible results across builds, you can choose to reuse the previously generated **seed** by using the option `-NoNewSeed`.
+
+```bat
+powershell -ep bypass ". .\build\Build.ps1; Invoke-Build -Name PrivescCheck -NoNewSeed"
+```
+
+The build script uses AES encryption with a randomly-generated **key** to obfuscate the content of each module. If you want to generate reproducible results across builds, you can choose to reuse the previously generated **key** by using the option `-NoNewKey`.
+
+```bat
+powershell -ep bypass ". .\build\Build.ps1; Invoke-Build -Name PrivescCheck -NoNewKey"
+```
+
 ## :bookmark_tabs: Credits
 
 - Word list - [CBHue/PyFuscation](https://github.com/CBHue/PyFuscation)
-- Vulnerable driver list - [https://www.loldrivers.io/api/drivers.csv](https://www.loldrivers.io/api/drivers.csv)
+- Known vulnerable driver list - [https://www.loldrivers.io/](https://www.loldrivers.io/)
