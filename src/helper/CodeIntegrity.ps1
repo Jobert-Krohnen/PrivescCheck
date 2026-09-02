@@ -70,7 +70,6 @@ function Get-CodeIntegrityPolicy {
         # Namespace "System.Security" is not loaded by default
         try { Add-Type -Assembly System.Security } catch { $FunctionalCheck = $false; Write-Warning "Failed to load assembly: System.Security" }
 
-        $CIPolicyFilePath = Join-Path -Path $env:SystemRoot -ChildPath "System32\CodeIntegrity\DriversIPolicy.p7b"
         $GuidLength = 0x10
         $HeaderLengthMax = 0x44
 
@@ -81,16 +80,16 @@ function Get-CodeIntegrityPolicy {
     process {
         if (-not $FunctionalCheck) { return }
 
-        $CIPolicyFilePathResolved = Resolve-Path -Path $CIPolicyFilePath -ErrorAction SilentlyContinue
-        if ($null -eq $CIPolicyFilePathResolved) {
-            Write-Warning "[GCIP] Failed to resolve policy file path ($($CIPolicyFilePath))."
+        $FilePathResolved = Resolve-Path -Path $FilePath -ErrorAction SilentlyContinue
+        if ($null -eq $FilePathResolved) {
+            Write-Warning "[GCIP] Failed to resolve policy file path ($($FilePath))."
             return
         }
 
-        Write-Verbose "[GCIP] Policy file path is valid ($($CIPolicyFilePathResolved))."
+        Write-Verbose "[GCIP] Policy file path is valid ($($FilePathResolved))."
 
         try {
-            $CIPolicyBytes = [Byte[]] [IO.File]::ReadAllBytes($CIPolicyFilePathResolved)
+            $CIPolicyBytes = [Byte[]] [IO.File]::ReadAllBytes($FilePathResolved)
         }
         catch {
             Write-Warning "[GCIP] Failed to read policy file ($($_.Exception.Message))."
@@ -773,7 +772,7 @@ function ConvertTo-CodeIntegrityOid {
 
     while ($i -lt $EncodedOIDBytes.Length) {
         if (-not ($EncodedOIDBytes[$i] -band 0x80)) {
-            # It is just singlebyte encoded
+            # It is just single-byte encoded
             $OIDComponents.Add($EncodedOIDBytes[$i])
             $i++
         } else {

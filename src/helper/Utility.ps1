@@ -809,7 +809,7 @@ function Get-FileHashHex {
 
     .LINK
     https://gist.github.com/jaredcatkinson/7d561b553a04501238f8e4f061f112b7
-    #>#
+    #>
 
     [CmdletBinding()]
     param(
@@ -975,6 +975,8 @@ function Get-KnownVulnerableKernelDriverSampleList {
 
         $KnownVulnerableDriverSampleList = [Object[]] (ConvertFrom-EmbeddedTextBlob -TextBlob $script:GlobalConstant.VulnerableDriverSamples | ConvertFrom-Csv)
 
+        Write-Verbose "Loaded $($KnownVulnerableDriverSampleList.Count) known vulnerable driver sample."
+
         if ($null -eq $KnownVulnerableDriverSampleList) {
             Write-Warning "Failed to retrieve the list of known vulnerable driver samples."
             return
@@ -982,7 +984,6 @@ function Get-KnownVulnerableKernelDriverSampleList {
 
         $KnownVulnerableDriverSampleList | ForEach-Object {
             $_ | Add-Member -MemberType "NoteProperty" -Name "Url" -Value "https://www.loldrivers.io/drivers/$($_.Id)"
-            $_
         }
 
         Set-CachedData -Name "KnownVulnerableDriverSampleList" -Data $KnownVulnerableDriverSampleList

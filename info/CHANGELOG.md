@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-01
+
+### Added
+
+- Add a check to enumerate known vulnerable drivers that are not blocked.
+
 ## 2026-08-29
 
 ### Modified

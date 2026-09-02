@@ -557,10 +557,7 @@ function Invoke-VulnerableDriverCheck {
     Status      : Running
     Hash        : 01aa278b07b58dc46c84bd0b1b5c8e9ee4e62ea0bf7a695862444af32e87f1fd
     Url         : https://www.loldrivers.io/drivers/e32bc3da-4db1-4858-a62c-6fbe4db6afbd
-
-    .NOTES
-    When building the scripting, the driver list is downloaded from loldrivers.io, filtered, and exported again as a CSV file embedded in the script as a global variable.
-    #>#
+    #>
 
     [CmdletBinding()]
     param(
@@ -585,6 +582,309 @@ function Invoke-VulnerableDriverCheck {
             $ProgressCount += 1
         }
         Write-Progress -Activity "Checking for known vulnerable drivers ($($Candidates.Count)/$($Candidates.Count)) against $($SampleList.Count) samples..." -Status "100% Complete:" -Completed
+
+        $CheckResult = New-Object -TypeName PSObject
+        $CheckResult | Add-Member -MemberType "NoteProperty" -Name "Result" -Value $AllResults
+        $CheckResult | Add-Member -MemberType "NoteProperty" -Name "Severity" -Value $(if ($AllResults) { $BaseSeverity } else { $script:SeverityLevel::None })
+        $CheckResult
+    }
+}
+
+function Invoke-VulnerableDriverBlockingPolicyCheck {
+    <#
+    .SYNOPSIS
+    Identify known vulnerable drivers which are not blocked by a Code Integrity policy.
+
+    Author: @itm4n
+    License: BSD 3-Clause
+
+    .DESCRIPTION
+    This check first tries to read local Code Integrity policy files, and then loops through the malware sample list to determine whether they would be blocked, based on their hash, version, or signer code signing information. The implementation is heavily inspired by the tool BYOVDFinder. It is important to note that the sample list is filtered on "vulnerable drivers"; it does not take into account "malware" drivers.
+
+    .EXAMPLE
+    PS C:\> Invoke-VulnerableDriverBlockingPolicyCheck
+
+    Name    : termdd.sys
+    Version : 6.1.7601.17514 (win7sp1_rtm.101119-1850)
+    Id      : ef848b1c-e197-4f98-aa19-4580f41a98b8
+    Url     : https://www.loldrivers.io/drivers/ef848b1c-e197-4f98-aa19-4580f41a98b8
+
+    Name    : HwOs2Ec.sys
+    Version : 1.0.0.1
+    Id      : 3ab0d182-6365-47a7-89f4-34121e889503
+    Url     : https://www.loldrivers.io/drivers/3ab0d182-6365-47a7-89f4-34121e889503
+
+    Name    : dsark.sys
+    Version : 1.0.0.1219, 1.0.0.1221
+    Id      : 399fb787-5b06-46f0-86cb-dff7374bb015
+    Url     : https://www.loldrivers.io/drivers/399fb787-5b06-46f0-86cb-dff7374bb015
+
+    Name    : afd.sys
+    Version : 10.0.22621.1105 (WinBuild.160101.0800), 10.0.22621.608 (WinBuild.160101.0800)
+    Id      : 394f49b2-2d78-4d0d-b374-1399695455f3
+    Url     : https://www.loldrivers.io/drivers/394f49b2-2d78-4d0d-b374-1399695455f3
+
+    Name    : ViveRRAudio.sys
+    Version : 0.1.11.7
+    Id      : 4cb95b41-43b4-4806-b536-ae5fd8c76b0e
+    Url     : https://www.loldrivers.io/drivers/4cb95b41-43b4-4806-b536-ae5fd8c76b0e
+
+    ...
+
+    .LINK
+    https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/design/microsoft-recommended-driver-block-rules
+
+    .LINK
+    https://github.com/ghostbyt3/BYOVDFinder
+    #>
+
+    [CmdletBinding()]
+    param (
+        [UInt32] $BaseSeverity
+    )
+
+    begin {
+        $DriverPolicyFilePaths = @(
+            (Join-Path -Path $env:windir -ChildPath "System32\CodeIntegrity\DriversIPolicy.p7b"),
+            (Join-Path -Path $env:windir -ChildPath "System32\CodeIntegrity\SiPolicy.p7b")
+        )
+
+        $VulnerableDriverSamples = [Object[]] (Get-KnownVulnerableKernelDriverSampleList)
+    }
+
+    process {
+        $AllResults = @()
+        $AllowedSamples = @()
+        $DriverPolicies = @{}
+
+        # Parse all the policy files we can find.
+        foreach ($DriverPolicyFilePath in $DriverPolicyFilePaths) {
+
+            $DriverPolicy = Get-CodeIntegrityPolicy -FilePath $DriverPolicyFilePath
+
+            if ($null -ne $DriverPolicy) {
+
+                $FileDenyRules = $DriverPolicy.FileRules | Where-Object { $_.Type -eq "Deny" }
+                $FileVersionDenyRules = $FileDenyRules | Where-Object { -not [String]::IsNullOrEmpty($_.FileName) }
+                $FileAttribRules = $DriverPolicy.FileRules | Where-Object { $_.Type -eq "FileAttrib" }
+                $SignerRules = $DriverPolicy.SignerRules | Where-Object { $_.CertRootType -eq "TBS" }
+
+                $DriverPolicies[$DriverPolicyFilePath] = @{
+                    "FileDenyRules" = $FileDenyRules
+                    "FileVersionDenyRules" = $FileVersionDenyRules
+                    "FileAttribRules" = $FileAttribRules
+                    "SignerRules" = $SignerRules
+                }
+            }
+        }
+
+        foreach ($VulnerableDriverSample in $VulnerableDriverSamples) {
+
+            $DriverSampleAllowed = $true
+
+            # Build a list of all the file hashes for this driver sample.
+            $VulnerableDriverSampleFileHashes = [String[]] @()
+            foreach ($HashAlg in @("MD5", "SHA1", "SHA256")) {
+                $FileHash = $VulnerableDriverSample.$HashAlg
+                if (-not [String]::IsNullOrEmpty($FileHash)) {
+                    $VulnerableDriverSampleFileHashes += $FileHash
+                }
+            }
+
+            # Build a list of all the authenticode hashes for this driver sample.
+            $VulnerableDriverSampleAuthenticodeHashes = [String[]] @()
+            foreach ($HashAlg in @("SHA1", "SHA256")) {
+                $AuthenticodeHash = $VulnerableDriverSample."Authenticode$($HashAlg)"
+                if (-not [String]::IsNullOrEmpty($AuthenticodeHash)) {
+                    $VulnerableDriverSampleAuthenticodeHashes += $AuthenticodeHash
+                }
+            }
+
+            # Build a list of all the TBS certificate hashes for this driver sample.
+            $VulnerableDriverSampleTbsHashes = [String[]] @()
+            foreach ($HashAlg in @("MD5", "SHA1", "SHA256", "SHA384")) {
+                $TbsHashes = $VulnerableDriverSample."Tbs$($HashAlg)"
+                if (-not [String]::IsNullOrEmpty($TbsHashes)) {
+                    foreach ($TbsHash in $TbsHashes.Split(",")) {
+                        $VulnerableDriverSampleTbsHashes += $TbsHash
+                    }
+                }
+            }
+
+            foreach ($k in $DriverPolicies.Keys) {
+
+                $DriverPolicy = $DriverPolicies[$k]
+
+                if ($null -eq $DriverPolicy) { continue }
+
+                # ==============================================================================
+                # Is there a "file deny rule" that would block this driver based on its hash,
+                # or its Authenticode hash?
+                # ==============================================================================
+
+                foreach ($FileDenyRule in $DriverPolicy['FileDenyRules']) {
+
+                    # Is there a match on the file hash?
+                    if ($VulnerableDriverSampleFileHashes -contains $FileDenyRule.Hash) {
+
+                        # Write-Verbose "Found a match on file hash '$($FileDenyRule.Hash)'."
+                        $DriverSampleAllowed = $false
+                        break
+                    }
+
+                    # Is there a match on the authenticode hash?
+                    if ($VulnerableDriverSampleAuthenticodeHashes -contains $FileDenyRule.Hash) {
+
+                        # Write-Verbose "Found a match on authenticode hash '$($FileDenyRule.Hash)'."
+                        $DriverSampleAllowed = $false
+                        break
+                    }
+                }
+
+                if (-not $DriverSampleAllowed) { continue }
+
+                $VulnerableDriverSampleFileAttribs = $null
+                if (-not [String]::IsNullOrEmpty($VulnerableDriverSample.Name)) {
+                    $VulnerableDriverSampleFileAttribs = [Object[]] ($DriverPolicy['FileAttribRules'] | Where-Object { $_.FileName -eq $VulnerableDriverSample.Name })
+                }
+
+                # ==============================================================================
+                # Is there a "signer rule" that would block this driver based on its signer
+                # data?
+                # ==============================================================================
+
+                foreach ($SignerRule in $DriverPolicy['SignerRules']) {
+
+                    $SignerRuleTbsHash = $SignerRule.CertRootValue
+
+                    # Is the signer blocked?
+                    if ($VulnerableDriverSampleTbsHashes -contains $SignerRuleTbsHash) {
+
+                        $SignerRuleFileAttribRef = [String[]] $SignerRule.FileAttribRef
+
+                        # If there isn't a list of file references, then consider that all drivers for
+                        # this signer rule are blocked.
+                        if ($SignerRuleFileAttribRef.Count -eq 0) {
+
+                            # Write-Verbose "Found a match on TBS hash '$($SignerRuleTbsHash)' without any particular file reference."
+                            $DriverSampleAllowed = $false
+                            break
+                        }
+
+                        # If there is a list of file references, check whether the driver sample filename
+                        # appears in the list.
+                        foreach ($VulnerableDriverSampleFileAttrib in $VulnerableDriverSampleFileAttribs) {
+
+                            if ($SignerRuleFileAttribRef -contains $VulnerableDriverSampleFileAttrib.Id) {
+
+                                # Write-Verbose "Found a match on TBS hash '$($SignerRuleTbsHash)' with reference filename '$($VulnerableDriverSample.Name)'."
+                                $DriverSampleAllowed = $false
+                                break
+                            }
+                        }
+
+                        if (-not $DriverSampleAllowed) { break }
+                    }
+                }
+
+                if (-not $DriverSampleAllowed) { continue }
+
+                # ==============================================================================
+                # Is there a "file version rule" that would block this driver based on its name
+                # and a maximum version?
+                # ==============================================================================
+
+                # Is the version blocked?
+                if (-not [String]::IsNullOrEmpty($VulnerableDriverSample.Version)) {
+
+                    try {
+                        $VulnerableDriverSampleFileVersion = [Version] (-split ($VulnerableDriverSample.Version -replace ',\s*', '.'))[0]
+
+                        foreach ($FileVersionDenyRule in $DriverPolicy['FileVersionDenyRules']) {
+
+                            if ($FileVersionDenyRule.FileName -eq $VulnerableDriverSample.Name) {
+
+                                $MaximumFileVersion = [Version] $FileVersionDenyRule.MaximumFileVersion
+
+                                if ($VulnerableDriverSampleFileVersion -le $MaximumFileVersion) {
+
+                                    # Write-Verbose "Found a match on filename '$($VulnerableDriverSample.Name)' with maximum version '$($MaximumFileVersion)'."
+                                    $DriverSampleAllowed = $false
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Error while parsing file version: $($_.Exception.Message)"
+                    }
+                }
+
+                if (-not $DriverSampleAllowed) { continue }
+
+                # ==============================================================================
+                # Apply a few more filters to reduce the probability of returning false
+                # positives.
+                # ==============================================================================
+
+                if ($VulnerableDriverSampleFileHashes.Count -eq 0) {
+                    # No file hash provided. This could very likely yield a false positive, ignore it.
+                    continue
+                }
+
+                if ($VulnerableDriverSampleAuthenticodeHashes.Count -eq 0) {
+                    # No authenticode hash provided. This could very likely yield a false positive, ignore it.
+                    continue
+                }
+
+                if ($VulnerableDriverSampleTbsHashes.Count -eq 0) {
+                    # No TBS hash provided. This could very likely yield a false positive, ignore it.
+                    continue
+                }
+
+                $AllowedSamples += $VulnerableDriverSample
+            }
+        }
+
+        Write-Verbose "Found $($AllowedSamples.Count)/$($VulnerableDriverSamples.Count) known vulnerable driver samples which are not blocked."
+
+        $VulnerableDrivers = @{}
+        $AllowedSamples | ForEach-Object { $_ | Select-Object -ExpandProperty "Id" } | Sort-Object -Unique
+
+        foreach ($AllowedSample in $AllowedSamples) {
+
+            if (-not $VulnerableDrivers.ContainsKey($AllowedSample.Id)) {
+                $DriverObject = New-Object -TypeName PSObject
+                $DriverObject | Add-Member -MemberType "NoteProperty" -Name "Name" -Value ([String[]] @())
+                $DriverObject | Add-Member -MemberType "NoteProperty" -Name "Version" -Value ([String[]] @())
+                $DriverObject | Add-Member -MemberType "NoteProperty" -Name "Id" -Value $AllowedSample.Id
+                $DriverObject | Add-Member -MemberType "NoteProperty" -Name "Url" -Value $AllowedSample.Url
+                $VulnerableDrivers[$AllowedSample.Id] = $DriverObject
+            }
+
+            $DriverObject = $VulnerableDrivers[$AllowedSample.Id]
+
+            if (-not [String]::IsNullOrEmpty($AllowedSample.Name)) {
+                if ($DriverObject.Name -notcontains $AllowedSample.Name) {
+                    $DriverObject.Name += $AllowedSample.Name
+                }
+            }
+
+            if (-not [String]::IsNullOrEmpty($AllowedSample.Version)) {
+                $Version = $AllowedSample.Version -replace ',\s*', '.'
+                if ($DriverObject.Version -notcontains $Version) {
+                    $DriverObject.Version += $Version
+                }
+            }
+        }
+
+        Write-Verbose "Total samples allowed: $($AllowedSamples.Count) | Total drivers allowed: $($VulnerableDrivers.Keys.Count)"
+
+        foreach ($k in $VulnerableDrivers.Keys) {
+            $VulnerableDrivers[$k].Name = $VulnerableDrivers[$k].Name -join ", "
+            $VulnerableDrivers[$k].Version = $VulnerableDrivers[$k].Version -join ", "
+            $AllResults += $VulnerableDrivers[$k]
+        }
 
         $CheckResult = New-Object -TypeName PSObject
         $CheckResult | Add-Member -MemberType "NoteProperty" -Name "Result" -Value $AllResults
